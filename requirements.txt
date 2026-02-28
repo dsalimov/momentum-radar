@@ -9,3 +9,7 @@ finnhub-python
 pytz
 pytest
 pytest-asyncio
+scipy
+mplfinance
+matplotlib
+python-telegram-bot

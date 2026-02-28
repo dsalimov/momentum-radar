@@ -17,8 +17,15 @@ Usage::
 Or simply::
 
     python main.py
+
+Pattern research mode::
+
+    python main.py --pattern "double bottom"
+    python main.py --pattern "head and shoulders" --tickers AAPL,TSLA,MSFT
+    python main.py --bot
 """
 
+import argparse
 import asyncio
 import logging
 import signal
@@ -306,7 +313,101 @@ async def run_scanner() -> None:
 
 def main() -> None:
     """Entry point wrapper."""
-    asyncio.run(run_scanner())
+    parser = argparse.ArgumentParser(
+        description="Momentum Signal Radar",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--pattern",
+        type=str,
+        default=None,
+        help="Pattern to scan for (e.g. 'double bottom', 'head and shoulders')",
+    )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers to scan (optional, default: full universe)",
+    )
+    parser.add_argument(
+        "--bot",
+        action="store_true",
+        help="Start Telegram bot listener mode (runs continuously)",
+    )
+    args = parser.parse_args()
+
+    if args.bot:
+        # Start the Telegram pattern bot
+        from momentum_radar.telegram.bot import start_telegram_bot
+
+        asyncio.run(start_telegram_bot())
+    elif args.pattern:
+        # Run a one-shot pattern scan
+        _run_pattern_scan(args.pattern, args.tickers)
+    else:
+        # Normal momentum scanner
+        asyncio.run(run_scanner())
+
+
+def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
+    """Run a one-shot pattern scan from the CLI.
+
+    Args:
+        pattern_name: Name of the pattern to detect.
+        tickers_arg:  Optional comma-separated ticker override.
+    """
+    from momentum_radar.patterns.detector import scan_for_pattern, available_patterns
+    from momentum_radar.patterns.charts import generate_pattern_chart
+    from momentum_radar.alerts.telegram_alert import send_telegram_photo
+
+    if pattern_name.lower() not in available_patterns():
+        print(
+            f"Unknown pattern: '{pattern_name}'\n"
+            f"Available patterns:\n  " + "\n  ".join(available_patterns())
+        )
+        sys.exit(1)
+
+    fetcher = get_data_fetcher(config.data.provider)
+
+    if tickers_arg:
+        tickers: List[str] = [t.strip().upper() for t in tickers_arg.split(",") if t.strip()]
+    else:
+        universe_builder = UniverseBuilder(fetcher)
+        tickers = universe_builder.build()
+
+    print(
+        f"🔍 Scanning {len(tickers)} tickers for '{pattern_name}'… "
+        "This may take a moment."
+    )
+    matches = scan_for_pattern(pattern_name, tickers, fetcher, top_n=5)
+
+    if not matches:
+        print(f"No matches found for '{pattern_name}' (confidence ≥ 60%).")
+        return
+
+    print(f"\n✅ Found {len(matches)} match(es):\n")
+    for match in matches:
+        ticker = match["ticker"]
+        confidence = match.get("confidence", 0)
+        description = match.get("description", "")
+        df = match.get("df")
+
+        print(f"  📊 {ticker} — {match['pattern']} ({confidence}%)")
+        print(f"     {description}\n")
+
+        # Generate and save chart
+        if df is not None and not df.empty:
+            try:
+                chart_path = generate_pattern_chart(ticker, df, match)
+                print(f"     Chart saved: {chart_path}")
+                caption = (
+                    f"{ticker} — {match['pattern']} "
+                    f"(Confidence: {confidence}%)\n{description}"
+                )
+                if not send_telegram_photo(chart_path, caption):
+                    logger.debug("Telegram photo delivery skipped or failed for %s.", ticker)
+            except Exception as exc:
+                logger.warning("Could not generate chart for %s: %s", ticker, exc)
 
 
 if __name__ == "__main__":
