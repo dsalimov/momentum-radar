@@ -1,14 +1,17 @@
 """
-data_fetcher.py – Abstract data provider interface and yfinance implementation.
+data_fetcher.py – Abstract data provider interface and yfinance/finnhub implementations.
 
 The abstract base class ``BaseDataFetcher`` defines the contract that all data
 providers must satisfy.  New providers (Polygon, Alpaca, etc.) should subclass
 ``BaseDataFetcher`` and implement every abstract method.
 
-The concrete ``YFinanceDataFetcher`` uses *yfinance* as the default V1 source.
+The concrete ``YFinanceDataFetcher`` uses *yfinance* as an alternative source.
+The concrete ``FinnhubDataFetcher`` uses the *finnhub* REST API as the default source.
 """
 
 import logging
+import time
+import datetime
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
@@ -210,11 +213,145 @@ class YFinanceDataFetcher(BaseDataFetcher):
             return None
 
 
-def get_data_fetcher(provider: str = "yfinance") -> BaseDataFetcher:
+# ---------------------------------------------------------------------------
+# Finnhub implementation
+# ---------------------------------------------------------------------------
+
+class FinnhubDataFetcher(BaseDataFetcher):
+    """Data fetcher backed by the *finnhub* REST API (default provider).
+
+    Requires a free API key from https://finnhub.io.  Set ``FINNHUB_API_KEY``
+    in your ``.env`` file or environment.  The free tier allows 60 API calls
+    per minute — a small sleep is added between calls to stay within limits.
+    """
+
+    def __init__(self) -> None:
+        import finnhub
+        from momentum_radar.config import config
+
+        api_key = config.data.finnhub_api_key or ""
+        if not api_key:
+            logger.warning(
+                "FINNHUB_API_KEY is not set. Finnhub requests will fail. "
+                "Get a free key at https://finnhub.io"
+            )
+        self._client = finnhub.Client(api_key=api_key)
+
+    # Mapping from interval strings to Finnhub resolution codes.
+    # Finnhub supports: 1, 5, 15, 30, 60 (minutes), D, W, M.
+    _INTERVAL_MAP: Dict[str, str] = {
+        "1m": "1",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "60m": "60",
+        "1h": "60",
+    }
+
+    def get_intraday_bars(
+        self,
+        ticker: str,
+        interval: str = "1m",
+        period: str = "1d",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch intraday OHLCV bars via Finnhub ``stock_candles``."""
+        try:
+            resolution = self._INTERVAL_MAP.get(interval, "5")
+            now = int(datetime.datetime.now().timestamp())
+            # For "1d" look-back use approximately 1 trading day of seconds
+            lookback = 86400
+            if period.endswith("d"):
+                lookback = int(period[:-1]) * 86400
+            start = now - lookback
+            time.sleep(0.05)
+            resp = self._client.stock_candles(ticker, resolution, start, now)
+            if resp.get("s") != "ok":
+                logger.warning("No intraday data returned for %s", ticker)
+                return None
+            df = pd.DataFrame({
+                "open": resp["o"],
+                "high": resp["h"],
+                "low": resp["l"],
+                "close": resp["c"],
+                "volume": resp["v"],
+            }, index=pd.to_datetime(resp["t"], unit="s", utc=True))
+            return df
+        except Exception as exc:
+            logger.error("Error fetching intraday bars for %s: %s", ticker, exc)
+            return None
+
+    def get_daily_bars(
+        self,
+        ticker: str,
+        period: str = "60d",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch daily OHLCV bars via Finnhub ``stock_candles`` (resolution ``D``)."""
+        try:
+            days = 60
+            if period.endswith("d"):
+                days = int(period[:-1])
+            now = int(datetime.datetime.now().timestamp())
+            start = now - days * 86400
+            time.sleep(0.05)
+            resp = self._client.stock_candles(ticker, "D", start, now)
+            if resp.get("s") != "ok":
+                logger.warning("No daily data returned for %s", ticker)
+                return None
+            df = pd.DataFrame({
+                "open": resp["o"],
+                "high": resp["h"],
+                "low": resp["l"],
+                "close": resp["c"],
+                "volume": resp["v"],
+            }, index=pd.to_datetime(resp["t"], unit="s", utc=True))
+            return df
+        except Exception as exc:
+            logger.error("Error fetching daily bars for %s: %s", ticker, exc)
+            return None
+
+    def get_quote(self, ticker: str) -> Optional[Dict]:
+        """Fetch a live quote snapshot via Finnhub ``quote``."""
+        try:
+            time.sleep(0.05)
+            resp = self._client.quote(ticker)
+            return {
+                "price": resp.get("c"),
+                "volume": resp.get("v"),
+                "prev_close": resp.get("pc"),
+            }
+        except Exception as exc:
+            logger.error("Error fetching quote for %s: %s", ticker, exc)
+            return None
+
+    def get_fundamentals(self, ticker: str) -> Optional[Dict]:
+        """Fetch fundamental / short-interest data via Finnhub ``company_basic_financials``."""
+        try:
+            time.sleep(0.05)
+            resp = self._client.company_basic_financials(ticker, "all")
+            metric = resp.get("metric", {})
+            return {
+                "float_shares": metric.get("floatShares") or metric.get("shareFloat"),
+                "short_ratio": metric.get("shortRatio"),
+                "short_percent_of_float": metric.get("shortPercentOfFloat"),
+                "shares_outstanding": metric.get("sharesOutstanding"),
+            }
+        except Exception as exc:
+            logger.error("Error fetching fundamentals for %s: %s", ticker, exc)
+            return None
+
+    def get_options_volume(self, ticker: str) -> Optional[Dict]:
+        """Return ``None`` — options data is not available on the Finnhub free tier."""
+        logger.debug(
+            "Options data not available with Finnhub free tier for %s", ticker
+        )
+        return None
+
+
+def get_data_fetcher(provider: str = "finnhub") -> BaseDataFetcher:
     """Factory function that returns the appropriate data fetcher.
 
     Args:
-        provider: Provider name string (``"yfinance"`` supported in V1).
+        provider: Provider name string (``"yfinance"`` or ``"finnhub"``).
 
     Returns:
         A concrete :class:`BaseDataFetcher` instance.
@@ -224,6 +361,7 @@ def get_data_fetcher(provider: str = "yfinance") -> BaseDataFetcher:
     """
     providers: Dict[str, type] = {
         "yfinance": YFinanceDataFetcher,
+        "finnhub": FinnhubDataFetcher,
     }
     if provider not in providers:
         raise ValueError(
