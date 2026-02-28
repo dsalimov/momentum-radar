@@ -40,7 +40,10 @@ class TelegramConfig:
 class DataConfig:
     """Data provider configuration."""
 
-    provider: str = field(default_factory=lambda: _str("DATA_PROVIDER", "yfinance"))
+    provider: str = field(default_factory=lambda: _str("DATA_PROVIDER", "finnhub"))
+    finnhub_api_key: Optional[str] = field(
+        default_factory=lambda: _str("FINNHUB_API_KEY") or None
+    )
     polygon_api_key: Optional[str] = field(
         default_factory=lambda: _str("POLYGON_API_KEY") or None
     )

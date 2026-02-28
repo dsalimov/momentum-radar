@@ -5,6 +5,7 @@ aiohttp
 sqlalchemy
 python-dotenv
 yfinance
+finnhub-python
 pytz
 pytest
 pytest-asyncio

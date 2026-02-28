@@ -23,7 +23,7 @@ and logs everything to SQLite and CSV.
 - 📉 **Market context** – flat SPY/QQQ penalises scores by 1 to reduce noise
 - 🔁 **Alert cooldown** – configurable per-ticker cooldown (default 10 min)
 - 🔌 **Pluggable data providers** – abstract base class allows swapping
-  `yfinance` for Polygon, Alpaca, or any other source
+  `finnhub` (default) for `yfinance`, Polygon, Alpaca, or any other source
 - ⚙️ **Fully config-driven** – all thresholds via `.env` / environment variables
 
 ---
@@ -46,7 +46,7 @@ momentum-radar/
 │   │
 │   ├── data/
 │   │   ├── __init__.py
-│   │   ├── data_fetcher.py        ← abstract BaseDataFetcher + YFinanceFetcher
+│   │   ├── data_fetcher.py        ← abstract BaseDataFetcher + FinnhubFetcher + YFinanceFetcher
 │   │   └── universe_builder.py   ← filters the scanning universe
 │   │
 │   ├── signals/
@@ -110,8 +110,12 @@ cp .env.example .env
 
 Open `.env` and fill in your values (see **Configuration Reference** below).
 
-At minimum you need valid `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` values to
-receive Telegram notifications.  All other settings have sensible defaults.
+At minimum you need a `FINNHUB_API_KEY` (get a free key at https://finnhub.io)
+and valid `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` values to receive Telegram
+notifications.  All other settings have sensible defaults.
+
+> **Note:** `yfinance` is still available as an alternative provider by setting
+> `DATA_PROVIDER=yfinance` in your `.env`.  No API key is required for yfinance.
 
 ---
 
@@ -200,7 +204,7 @@ Time: 10:42 AM EST
                   ▼
    ┌──────────────────────────────┐
    │      BaseDataFetcher         │
-   │  (YFinance / Polygon / ...)  │
+   │  (Finnhub / YFinance / ...)  │
    └──────────────┬───────────────┘
                   │  bars, daily, fundamentals, options
                   ▼
@@ -269,7 +273,8 @@ All values can be overridden in your `.env` file.
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | – | Telegram Bot API token |
 | `TELEGRAM_CHAT_ID` | – | Target chat / channel ID |
-| `DATA_PROVIDER` | `yfinance` | Data source (`yfinance` in V1) |
+| `DATA_PROVIDER` | `finnhub` | Data source (`finnhub` default; `yfinance` available) |
+| `FINNHUB_API_KEY` | – | Finnhub API key (free at https://finnhub.io) |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `VOLUME_SPIKE_STRONG` | `2.0` | 5-min vol multiplier for strong spike (+2) |
 | `VOLUME_SPIKE_MODERATE` | `1.5` | 5-min vol multiplier for moderate spike (+1) |
