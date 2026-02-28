@@ -29,8 +29,14 @@ _KNOWN_PATTERNS = [
     "cup and handle",
     "ascending triangle",
     "descending triangle",
+    "symmetrical triangle",
     "rising wedge",
     "falling wedge",
+    "pennant",
+    "channel up",
+    "channel down",
+    "flat base",
+    "broadening formation",
 ]
 
 _HELP_TEXT = (
