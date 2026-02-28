@@ -1,11 +1,16 @@
 """
-charts.py – Candlestick chart generation with pattern annotations.
+charts.py - Candlestick chart generation with pattern annotations.
 
-Generates publication-quality PNG charts using *mplfinance* with the detected
-pattern key points overlaid as markers and lines.
+Generates publication-quality PNG charts using *mplfinance* with:
+- Trendlines drawn as solid lines
+- Compression zone shaded between trendlines
+- Pattern state label ("FORMING" / "NEAR BREAK")
+- Breakout level shown as a horizontal dashed line
+- Dark nightclouds theme
 """
 
 import logging
+import os
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
@@ -25,7 +30,8 @@ def generate_pattern_chart(
     Args:
         ticker:         Stock ticker symbol.
         df:             OHLCV DataFrame (daily bars).
-        pattern_result: Result dict from :func:`~momentum_radar.patterns.detector.detect_pattern`.
+        pattern_result: Result dict from
+                        :func:`~momentum_radar.patterns.detector.detect_pattern`.
         output_path:    Optional path to save the PNG.  If ``None``, a
                         temporary file is created via :func:`tempfile.mkstemp`.
 
@@ -38,40 +44,65 @@ def generate_pattern_chart(
     try:
         import mplfinance as mpf
         import matplotlib
-        # Set non-interactive backend before importing pyplot.
-        # This is a no-op if pyplot has already been imported elsewhere.
         try:
             matplotlib.use("Agg")
         except Exception:
             pass
         import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
     except ImportError as exc:
         raise ImportError(
             "mplfinance and matplotlib are required for chart generation."
         ) from exc
 
+    from momentum_radar.patterns.detector import PatternState
+
     pattern_name = pattern_result.get("pattern", "Pattern")
     confidence = pattern_result.get("confidence", 0)
     key_points: List[Tuple] = pattern_result.get("key_points", [])
+    state = pattern_result.get("state")
+    compression_ratio = pattern_result.get("compression_ratio")
+    breakout_level_upper = pattern_result.get("breakout_level_upper")
+    breakout_level_lower = pattern_result.get("breakout_level_lower")
+    distance_to_breakout = pattern_result.get("distance_to_breakout")
+    lines = pattern_result.get("lines", [])
 
-    # Use last 120 bars at most for readability
-    plot_df = df.tail(120).copy()
+    # Use last 30 bars at most for readability
+    plot_df = df.tail(30).copy()
 
     # Ensure column names are lowercase
-    plot_df.columns = [c.lower() for c in plot_df.columns]
+    plot_df.columns = [c.lower() if isinstance(c, str) else (c[0].lower() if c else '') for c in plot_df.columns]
 
-    # mplfinance requires specific column names
     required = {"open", "high", "low", "close", "volume"}
     missing = required - set(plot_df.columns)
     if missing:
         raise ValueError(f"DataFrame missing required columns: {missing}")
 
+    # Build chart title
+    if state is not None and compression_ratio is not None:
+        state_str = state.value.upper().replace("_", " ")
+        title = (
+            f"{ticker} - {pattern_name} [{state_str}] - "
+            f"Compression: {compression_ratio * 100:.0f}%"
+        )
+    else:
+        title = f"{ticker} - {pattern_name} (Confidence: {confidence}%)"
+
+    # Build alines for trendlines (list of line segments)
+    alines_list = []
+    aline_colors = []
+    for line_seg in lines:
+        if len(line_seg) >= 2:
+            # Convert each point to (pd.Timestamp, price)
+            pts = []
+            for pt in line_seg:
+                ts = pd.Timestamp(pt[0])
+                pts.append((ts, float(pt[1])))
+            alines_list.append(pts)
+            aline_colors.append("cyan")
+
     # Build scatter markers for key points
-    # Map dates from key_points back to plot_df index positions
-    marker_dates = []
-    marker_prices = []
-    marker_colors = []
-    marker_shapes = []
+    addplots = []
     for kp in key_points:
         date, price, label = kp[0], kp[1], kp[2]
         lbl_lower = label.lower()
@@ -87,56 +118,66 @@ def generate_pattern_chart(
         else:
             color = "cyan"
             shape = "o"
-        marker_dates.append(date)
-        marker_prices.append(price)
-        marker_colors.append(color)
-        marker_shapes.append(shape)
 
-    # Build addplot scatter series for each marker group by shape/color
-    addplots = []
-    for shape in set(marker_shapes):
-        idxs = [i for i, s in enumerate(marker_shapes) if s == shape]
-        for i in idxs:
-            target_date = marker_dates[i]
-            price = marker_prices[i]
-            color = marker_colors[i]
-            # Build a series aligned to plot_df with NaN everywhere except the marker
-            scatter_series = pd.Series(float("nan"), index=plot_df.index)
-            # Find nearest date in plot_df
-            try:
-                if target_date in plot_df.index:
-                    scatter_series[target_date] = price
-                else:
-                    # Find closest date
-                    diffs = abs(plot_df.index - pd.Timestamp(target_date))
-                    nearest = plot_df.index[diffs.argmin()]
-                    scatter_series[nearest] = price
-            except Exception:
-                pass
-            if scatter_series.notna().any():
-                addplots.append(
-                    mpf.make_addplot(
-                        scatter_series,
-                        type="scatter",
-                        markersize=120,
-                        marker=shape,
-                        color=color,
-                        panel=0,
-                    )
+        scatter_series = pd.Series(float("nan"), index=plot_df.index)
+        try:
+            target_date = pd.Timestamp(date)
+            if target_date in plot_df.index:
+                scatter_series[target_date] = price
+            else:
+                diffs = abs(plot_df.index - target_date)
+                nearest = plot_df.index[diffs.argmin()]
+                scatter_series[nearest] = price
+        except Exception:
+            pass
+        if scatter_series.notna().any():
+            addplots.append(
+                mpf.make_addplot(
+                    scatter_series,
+                    type="scatter",
+                    markersize=120,
+                    marker=shape,
+                    color=color,
+                    panel=0,
                 )
+            )
 
-    # Chart title
-    title = f"{ticker} — {pattern_name} (Confidence: {confidence}%)"
+    # Add breakout levels as horizontal lines via addplot
+    if breakout_level_upper is not None:
+        upper_line = pd.Series(float(breakout_level_upper), index=plot_df.index)
+        addplots.append(
+            mpf.make_addplot(
+                upper_line,
+                linestyle="--",
+                color="yellow",
+                width=1.2,
+                panel=0,
+            )
+        )
+    if breakout_level_lower is not None:
+        lower_line = pd.Series(float(breakout_level_lower), index=plot_df.index)
+        addplots.append(
+            mpf.make_addplot(
+                lower_line,
+                linestyle="--",
+                color="yellow",
+                width=1.2,
+                panel=0,
+            )
+        )
 
     # Determine output file path
     if output_path is None:
         fd, output_path = tempfile.mkstemp(suffix=".png", prefix=f"chart_{ticker}_")
-        import os
         os.close(fd)
 
-    # Plot
-    style = mpf.make_mpf_style(base_mpf_style="charles", rc={"axes.titlesize": 11})
-    fig_kwargs = dict(
+    # Use nightclouds dark style
+    style = mpf.make_mpf_style(
+        base_mpf_style="nightclouds",
+        rc={"axes.titlesize": 10, "axes.titlecolor": "white"},
+    )
+
+    fig_kwargs: Dict = dict(
         type="candle",
         style=style,
         title=title,
@@ -147,9 +188,57 @@ def generate_pattern_chart(
     )
     if addplots:
         fig_kwargs["addplot"] = addplots
+    if alines_list:
+        fig_kwargs["alines"] = dict(alines=alines_list, colors=aline_colors, linewidths=1.5)
 
     try:
         fig, axes = mpf.plot(plot_df, **fig_kwargs)
+        ax = axes[0]
+
+        # Shade the compression zone between trendlines
+        if (
+            breakout_level_upper is not None
+            and breakout_level_lower is not None
+            and breakout_level_upper > breakout_level_lower
+        ):
+            x_range = range(len(plot_df))
+            ax.fill_between(
+                x_range,
+                float(breakout_level_lower),
+                float(breakout_level_upper),
+                alpha=0.10,
+                color="cyan",
+                label="Compression zone",
+            )
+
+        # Add state annotation label
+        if state is not None:
+            state_str = state.value.upper().replace("_", " ")
+            if state == PatternState.NEAR_BREAK:
+                label_color = "red"
+            else:
+                label_color = "yellow"
+            ax.annotate(
+                state_str,
+                xy=(0.02, 0.95),
+                xycoords="axes fraction",
+                fontsize=12,
+                fontweight="bold",
+                color=label_color,
+                va="top",
+            )
+
+        # Show distance to breakout if available
+        if distance_to_breakout is not None:
+            ax.annotate(
+                f"Dist to breakout: ${distance_to_breakout:.2f}",
+                xy=(0.02, 0.88),
+                xycoords="axes fraction",
+                fontsize=9,
+                color="white",
+                va="top",
+            )
+
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
     except Exception as exc:
