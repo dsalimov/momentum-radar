@@ -20,6 +20,20 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _normalise_yf_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Normalise yfinance DataFrame column names to lowercase strings.
+
+    yfinance may return MultiIndex columns (e.g. ``('Close', 'AAPL')``) or
+    plain string columns depending on the version.  This helper flattens
+    and lowercases them consistently.
+    """
+    df.columns = [
+        c.lower() if isinstance(c, str) else (c[0].lower() if c else "")
+        for c in df.columns
+    ]
+    return df
+
+
 class BaseDataFetcher(ABC):
     """Abstract base class for all data providers."""
 
@@ -347,11 +361,154 @@ class FinnhubDataFetcher(BaseDataFetcher):
         return None
 
 
+
+# ---------------------------------------------------------------------------
+# Hybrid implementation (yfinance for bars, Finnhub for quotes/fundamentals)
+# ---------------------------------------------------------------------------
+
+class HybridDataFetcher(BaseDataFetcher):
+    """Hybrid fetcher: yfinance for OHLCV bars, Finnhub for quotes/fundamentals.
+
+    The Finnhub free tier does NOT support ``stock_candles`` (returns 403), so
+    bar data is sourced from *yfinance* instead.  Quotes and fundamentals still
+    use Finnhub for real-time accuracy.
+
+    A local SQLite cache directory (``.yf_cache``) is created next to the
+    package root to work around yfinance timezone-cache issues.
+    """
+
+    def __init__(self) -> None:
+        import os
+        import yfinance as yf
+        import finnhub
+        from momentum_radar.config import config
+
+        # yfinance SQLite cache fix
+        from pathlib import Path
+        cache_dir = str(Path(__file__).parent.parent.parent / ".yf_cache")
+        import os as _os
+        _os.makedirs(cache_dir, exist_ok=True)
+        try:
+            yf.set_tz_cache_location(cache_dir)
+        except Exception:
+            pass
+
+        api_key = config.data.finnhub_api_key or ""
+        if not api_key:
+            logger.warning(
+                "FINNHUB_API_KEY is not set. Finnhub requests will fail. "
+                "Get a free key at https://finnhub.io"
+            )
+        self._finnhub_client = finnhub.Client(api_key=api_key)
+
+    # ------------------------------------------------------------------
+    # Bar data via yfinance
+    # ------------------------------------------------------------------
+
+    def get_intraday_bars(
+        self,
+        ticker: str,
+        interval: str = "1m",
+        period: str = "1d",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch intraday OHLCV bars via yfinance."""
+        try:
+            import yfinance as yf
+
+            df = yf.download(
+                ticker,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=True,
+            )
+            if df is None or df.empty:
+                logger.warning("No intraday data returned for %s", ticker)
+                return None
+            _normalise_yf_columns(df)
+            return df
+        except Exception as exc:
+            logger.error("Error fetching intraday bars for %s: %s", ticker, exc)
+            return None
+
+    def get_daily_bars(
+        self,
+        ticker: str,
+        period: str = "60d",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch daily OHLCV bars via yfinance."""
+        try:
+            import yfinance as yf
+
+            df = yf.download(
+                ticker,
+                period=period,
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+            )
+            if df is None or df.empty:
+                logger.warning("No daily data returned for %s", ticker)
+                return None
+            _normalise_yf_columns(df)
+            return df
+        except Exception as exc:
+            logger.error("Error fetching daily bars for %s: %s", ticker, exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # Quotes and fundamentals via Finnhub
+    # ------------------------------------------------------------------
+
+    def get_quote(self, ticker: str) -> Optional[Dict]:
+        """Fetch a live quote snapshot via Finnhub."""
+        try:
+            time.sleep(0.05)
+            resp = self._finnhub_client.quote(ticker)
+            return {
+                "price": resp.get("c"),
+                "volume": resp.get("v"),
+                "prev_close": resp.get("pc"),
+            }
+        except Exception as exc:
+            logger.error("Error fetching quote for %s: %s", ticker, exc)
+            return None
+
+    def get_fundamentals(self, ticker: str) -> Optional[Dict]:
+        """Fetch fundamental data via Finnhub ``company_basic_financials``."""
+        try:
+            time.sleep(0.05)
+            resp = self._finnhub_client.company_basic_financials(ticker, "all")
+            metric = resp.get("metric", {})
+            return {
+                "float_shares": metric.get("floatShares") or metric.get("shareFloat"),
+                "short_ratio": metric.get("shortRatio"),
+                "short_percent_of_float": metric.get("shortPercentOfFloat"),
+                "shares_outstanding": metric.get("sharesOutstanding"),
+            }
+        except Exception as exc:
+            logger.error("Error fetching fundamentals for %s: %s", ticker, exc)
+            return None
+
+    def get_options_volume(self, ticker: str) -> Optional[Dict]:
+        """Return ``None`` - options data is not available in hybrid mode."""
+        logger.debug("Options data not available with HybridDataFetcher for %s", ticker)
+        return None
+
+
 def get_data_fetcher(provider: str = "finnhub") -> BaseDataFetcher:
     """Factory function that returns the appropriate data fetcher.
 
     Args:
-        provider: Provider name string (``"yfinance"`` or ``"finnhub"``).
+        provider: Provider name string.  Supported values:
+
+                  - ``"finnhub"``      — :class:`HybridDataFetcher` (default)
+                    Uses yfinance for OHLCV bars and Finnhub for quotes /
+                    fundamentals.  Works with the free Finnhub tier.
+                  - ``"yfinance"``     — :class:`YFinanceDataFetcher`
+                    Fully yfinance-backed; useful when no Finnhub key is set.
+                  - ``"finnhub_paid"`` — :class:`FinnhubDataFetcher`
+                    Pure Finnhub implementation for paid-tier subscribers.
 
     Returns:
         A concrete :class:`BaseDataFetcher` instance.
@@ -360,8 +517,9 @@ def get_data_fetcher(provider: str = "finnhub") -> BaseDataFetcher:
         ValueError: If the requested provider is not supported.
     """
     providers: Dict[str, type] = {
+        "finnhub": HybridDataFetcher,
         "yfinance": YFinanceDataFetcher,
-        "finnhub": FinnhubDataFetcher,
+        "finnhub_paid": FinnhubDataFetcher,
     }
     if provider not in providers:
         raise ValueError(
