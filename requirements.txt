@@ -1,0 +1,10 @@
+pandas
+numpy
+requests
+aiohttp
+sqlalchemy
+python-dotenv
+yfinance
+pytz
+pytest
+pytest-asyncio
