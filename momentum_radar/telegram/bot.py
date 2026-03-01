@@ -86,6 +86,9 @@ _HELP_TEXT = (
     "  /premarket - Run pre-market scan (unusual vol + most active + options spikes)\n"
     "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
     "  /brief - Generate daily market intelligence brief\n\n"
+    "News Commands:\n"
+    "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
+    "  /marketnews - Full market-wide news search with AI summary\n\n"
     "Use /status to check bot health."
 )
 
@@ -184,6 +187,11 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             await _squeeze_handler_impl(update, context, ticker)
         elif text_lower == "brief":
             await _brief_handler_impl(update, context)
+        elif text_lower.startswith("news "):
+            ticker = text[len("news "):].strip().upper()
+            await _news_handler_impl(update, context, ticker)
+        elif text_lower == "marketnews":
+            await _marketnews_handler_impl(update, context)
         else:
             await _run_scan(update, context, text)
 
@@ -226,6 +234,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
 
     async def _brief_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _brief_handler_impl(update, context)
+
+    async def _news_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _news_handler_impl(update, context, ticker)
+
+    async def _marketnews_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _marketnews_handler_impl(update, context)
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -801,6 +816,75 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
             await update.message.reply_text(chunk)
 
+    async def _news_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        if not ticker:
+            await update.message.reply_text("Usage: /news AAPL")
+            return
+        await update.message.reply_text(
+            f"Fetching latest news for {ticker} from all sources… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.news.news_fetcher import (
+                fetch_ticker_news,
+                summarize_news,
+                format_news_report,
+            )
+            articles = await loop.run_in_executor(
+                None, lambda: fetch_ticker_news(ticker)
+            )
+        except Exception as exc:
+            logger.error("Ticker news fetch failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not fetch news for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        if not articles:
+            await update.message.reply_text(
+                f"No news found for {ticker} at this time."
+            )
+            return
+
+        summary = summarize_news(articles)
+        report = format_news_report(articles, summary, title=f"News: {ticker}")
+        msg = _safe_text(report)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _marketnews_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        await update.message.reply_text(
+            "Fetching full market news from all sources… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.news.news_fetcher import (
+                fetch_market_news,
+                summarize_news,
+                format_news_report,
+            )
+            articles = await loop.run_in_executor(None, fetch_market_news)
+        except Exception as exc:
+            logger.error("Market news fetch failed: %s", exc)
+            await update.message.reply_text(
+                "Could not fetch market news. Please try again later."
+            )
+            return
+
+        if not articles:
+            await update.message.reply_text("No market news available at this time.")
+            return
+
+        summary = summarize_news(articles)
+        report = format_news_report(articles, summary, title="Full Market News")
+        msg = _safe_text(report)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
     async def _run_scan(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
@@ -886,6 +970,8 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("premarket", _premarket_handler))
     app.add_handler(CommandHandler("squeeze", _squeeze_handler))
     app.add_handler(CommandHandler("brief", _brief_handler))
+    app.add_handler(CommandHandler("news", _news_handler))
+    app.add_handler(CommandHandler("marketnews", _marketnews_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
