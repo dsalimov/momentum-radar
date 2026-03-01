@@ -80,7 +80,11 @@ def generate_pattern_chart(
 
     # Build chart title
     if state is not None and compression_ratio is not None:
-        state_str = state.value.upper().replace("_", " ")
+        state_str = (
+            state.value.upper().replace("_", " ")
+            if hasattr(state, "value")
+            else str(state).upper().replace("_", " ")
+        )
         title = (
             f"{ticker} - {pattern_name} [{state_str}] - "
             f"Compression: {compression_ratio * 100:.0f}%"
@@ -213,8 +217,14 @@ def generate_pattern_chart(
 
         # Add state annotation label
         if state is not None:
-            state_str = state.value.upper().replace("_", " ")
-            if state == PatternState.NEAR_BREAK:
+            state_str = (
+                state.value.upper().replace("_", " ")
+                if hasattr(state, "value")
+                else str(state).upper().replace("_", " ")
+            )
+            if state == PatternState.NEAR_BREAK or (
+                isinstance(state, str) and state == "near_break"
+            ):
                 label_color = "red"
             else:
                 label_color = "yellow"
@@ -238,6 +248,38 @@ def generate_pattern_chart(
                 color="white",
                 va="top",
             )
+
+        # Highlight candlestick pattern candles
+        pattern_type = pattern_result.get("pattern_type", "structure")
+        candle_indices = pattern_result.get("candle_indices", [])
+        if pattern_type == "candlestick" and candle_indices:
+            for idx in candle_indices:
+                if 0 <= idx < len(plot_df):
+                    ax.axvspan(idx - 0.4, idx + 0.4, alpha=0.15, color="yellow")
+
+            # Add bias arrow after the last pattern candle
+            bias = pattern_result.get("bias", "neutral")
+            last_idx = max(candle_indices)
+            if last_idx < len(plot_df):
+                arrow_price = float(plot_df["close"].iloc[last_idx])
+                if bias == "bullish":
+                    ax.annotate(
+                        "▲",
+                        xy=(last_idx + 1, arrow_price),
+                        fontsize=20,
+                        color="#00ff88",
+                        ha="center",
+                        va="bottom",
+                    )
+                elif bias == "bearish":
+                    ax.annotate(
+                        "▼",
+                        xy=(last_idx + 1, arrow_price),
+                        fontsize=20,
+                        color="#ff4444",
+                        ha="center",
+                        va="top",
+                    )
 
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)

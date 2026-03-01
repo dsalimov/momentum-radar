@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _KNOWN_PATTERNS = [
+    # Structure patterns
     "double bottom",
     "double top",
     "head and shoulders",
@@ -37,17 +38,52 @@ _KNOWN_PATTERNS = [
     "channel down",
     "flat base",
     "broadening formation",
+ <<<<<<< copilot/add-more-chart-patterns
+=======
+    # Candlestick patterns
+    "hammer",
+    "inverted hammer",
+    "hanging man",
+    "shooting star",
+    "doji",
+    "dragonfly doji",
+    "gravestone doji",
+    "bullish marubozu",
+    "bearish marubozu",
+    "spinning top",
+    "bullish engulfing",
+    "bearish engulfing",
+    "bullish harami",
+    "bearish harami",
+    "tweezer top",
+    "tweezer bottom",
+    "piercing line",
+    "dark cloud cover",
+    "morning star",
+    "evening star",
+    "three white soldiers",
+    "three black crows",
+    "three inside up",
+    "three inside down",
+ >>>>>>> main
 ]
 
 _HELP_TEXT = (
-    "📈 *Pattern Research Bot*\n\n"
+    "Pattern Research Bot\n\n"
     "Send a pattern name to scan 500+ stocks.\n\n"
-    "*Available patterns:*\n"
-    + "\n".join(f"  • {p}" for p in _KNOWN_PATTERNS)
+    "Available patterns:\n"
+    + "\n".join(f"  - {p}" for p in _KNOWN_PATTERNS)
     + "\n\n"
-    "Or use `/scan <pattern>` — e.g. `/scan double bottom`\n"
-    "Use `/status` to check bot health."
+    "Or use /scan <pattern> - e.g. /scan double bottom\n"
+    "Use /status to check bot health."
 )
+
+
+def _safe_text(text: str) -> str:
+    """Strip Markdown special characters to send as plain text."""
+    for char in ["*", "_", "`", "[", "]", "(", ")"]:
+        text = text.replace(char, "")
+    return text
 
 
 async def start_telegram_bot() -> None:  # pragma: no cover
@@ -92,7 +128,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     logger.info("Universe ready: %d tickers", len(universe))
 
     async def _help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown")
+        await update.message.reply_text(_HELP_TEXT)
 
     async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
@@ -117,15 +153,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         pattern_lower = pattern_name.strip().lower()
         if not pattern_lower or pattern_lower not in _KNOWN_PATTERNS:
             await update.message.reply_text(
-                f"❓ Unknown pattern: '{pattern_name}'\n\n{_HELP_TEXT}",
-                parse_mode="Markdown",
+                f"Unknown pattern: '{pattern_name}'\n\n{_HELP_TEXT}",
             )
             return
 
         await update.message.reply_text(
-            f"🔍 Scanning {len(universe)}+ stocks for *{pattern_name.title()}* pattern… "
-            f"This may take a minute.",
-            parse_mode="Markdown",
+            f"Scanning {len(universe)}+ stocks for {pattern_name.title()} pattern..."
+            f" This may take a minute.",
         )
 
         loop = asyncio.get_event_loop()
@@ -136,15 +170,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
 
         if not matches:
             await update.message.reply_text(
-                f"😕 No strong matches found for *{pattern_name.title()}* "
-                f"(confidence ≥ 60%) in the current universe.",
-                parse_mode="Markdown",
+                f"No strong matches found for {pattern_name.title()} "
+                f"(confidence >= 60%) in the current universe.",
             )
             return
 
         await update.message.reply_text(
-            f"✅ Found *{len(matches)}* match(es) for *{pattern_name.title()}*:",
-            parse_mode="Markdown",
+            f"Found {len(matches)} match(es) for {pattern_name.title()}:",
         )
 
         for match in matches:
@@ -154,9 +186,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             description = match.get("description", "")
 
             caption = (
-                f"📊 *{ticker}* — {pattern_name.title()}\n"
+                f"{ticker} - {pattern_name.title()}\n"
                 f"Confidence: {confidence}%\n"
-                f"{description}"
+                f"{_safe_text(description)}"
             )
 
             if df is not None and not df.empty:
@@ -170,7 +202,6 @@ async def start_telegram_bot() -> None:  # pragma: no cover
                             chat_id=update.effective_chat.id,
                             photo=photo,
                             caption=caption,
-                            parse_mode="Markdown",
                         )
                     try:
                         os.remove(chart_path)
@@ -178,9 +209,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
                         pass
                 except Exception as exc:
                     logger.error("Chart generation failed for %s: %s", ticker, exc)
-                    await update.message.reply_text(caption, parse_mode="Markdown")
+                    await update.message.reply_text(caption)
             else:
-                await update.message.reply_text(caption, parse_mode="Markdown")
+                await update.message.reply_text(caption)
 
     # Build and run the application
     app = Application.builder().token(bot_token).build()
