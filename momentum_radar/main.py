@@ -275,38 +275,45 @@ async def run_scanner() -> None:
 
     logger.info("Universe ready: %d tickers. Starting scan loop.", len(universe))
 
-    while not _SHUTDOWN:
-        now = datetime.now()
+    # Start pre-market scheduler
+    from momentum_radar.premarket.scheduler import start_scheduler, stop_scheduler
+    scheduler = start_scheduler(universe, fetcher, send_telegram_alert)
 
-        if not is_market_open(now):
-            logger.info("Market closed. Waiting for next check…")
-            await asyncio.sleep(60)
-            continue
+    try:
+        while not _SHUTDOWN:
+            now = datetime.now()
 
-        lull = is_lunch_lull(now)
-        if lull:
-            logger.info("Lunch-lull window – scan frequency reduced.")
+            if not is_market_open(now):
+                logger.info("Market closed. Waiting for next check…")
+                await asyncio.sleep(60)
+                continue
 
-        _, _, market_penalty, market_condition = _get_market_context(fetcher)
+            lull = is_lunch_lull(now)
+            if lull:
+                logger.info("Lunch-lull window – scan frequency reduced.")
 
-        logger.info(
-            "Scan cycle starting at %s | market=%s | penalty=%d",
-            now.strftime("%H:%M:%S"),
-            market_condition,
-            market_penalty,
-        )
+            _, _, market_penalty, market_condition = _get_market_context(fetcher)
 
-        for ticker in universe:
-            if _SHUTDOWN:
-                break
-            _scan_ticker(ticker, fetcher, market_penalty, market_condition)
-            await asyncio.sleep(0)  # yield control to the event loop
+            logger.info(
+                "Scan cycle starting at %s | market=%s | penalty=%d",
+                now.strftime("%H:%M:%S"),
+                market_condition,
+                market_penalty,
+            )
 
-        interval = config.scan.interval_seconds
-        if lull:
-            interval *= 2  # slower during lunch lull
-        logger.info("Scan cycle complete. Next cycle in %ds.", interval)
-        await asyncio.sleep(interval)
+            for ticker in universe:
+                if _SHUTDOWN:
+                    break
+                _scan_ticker(ticker, fetcher, market_penalty, market_condition)
+                await asyncio.sleep(0)  # yield control to the event loop
+
+            interval = config.scan.interval_seconds
+            if lull:
+                interval *= 2  # slower during lunch lull
+            logger.info("Scan cycle complete. Next cycle in %ds.", interval)
+            await asyncio.sleep(interval)
+    finally:
+        stop_scheduler(scheduler)
 
     logger.info("Momentum Signal Radar shut down cleanly.")
 
