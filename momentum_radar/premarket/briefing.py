@@ -185,11 +185,10 @@ def generate_market_brief(
         if candidates:
             for c in candidates:
                 si_str = f"{c['short_interest_pct']:.1%}" if c.get("short_interest_pct") is not None else "N/A"
+                rvol_str = f"  RVOL {c['rvol']}x" if c.get("rvol") else ""
                 lines.append(
                     f"  {c['ticker']:6s}  Score {c['squeeze_score']}%  "
-                    f"SI {si_str}  Float {c.get('float_str', 'N/A')}  "
-                    f"RVOL {c['rvol']}x" if c.get("rvol") else
-                    f"  {c['ticker']:6s}  Score {c['squeeze_score']}%  SI {si_str}"
+                    f"SI {si_str}  Float {c.get('float_str', 'N/A')}{rvol_str}"
                 )
         else:
             lines.append("  No squeeze candidates above threshold.")

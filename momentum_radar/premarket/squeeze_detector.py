@@ -172,7 +172,8 @@ def build_squeeze_report(ticker: str, fetcher: BaseDataFetcher) -> Optional[Dict
 
     # Fallback RVOL from daily bars
     if rvol is None and len(daily) >= 5:
-        avg_vol = float(daily["volume"].iloc[-31:-1].mean()) if len(daily) >= 31 else float(daily["volume"].iloc[:-1].mean())
+        lookback = daily["volume"].iloc[-31:-1] if len(daily) >= 31 else daily["volume"].iloc[:-1]
+        avg_vol = float(lookback.mean())
         today_vol = float(daily["volume"].iloc[-1])
         rvol = today_vol / avg_vol if avg_vol > 0 else None
 

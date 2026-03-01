@@ -250,7 +250,7 @@ class TestFormatSqueezeReport:
 # scan_squeeze_candidates
 # ---------------------------------------------------------------------------
 
-class TestScanSqueezeCandiates:
+class TestScanSqueezeCandidates:
     def test_returns_sorted_by_score(self):
         from momentum_radar.premarket.squeeze_detector import scan_squeeze_candidates
 
