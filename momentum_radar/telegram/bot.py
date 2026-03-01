@@ -30,6 +30,7 @@ _KNOWN_PATTERNS = [
     "cup and handle",
     "ascending triangle",
     "descending triangle",
+    "symmetrical triangle",
     "rising wedge",
     "falling wedge",
     "pennant",
@@ -37,6 +38,8 @@ _KNOWN_PATTERNS = [
     "channel down",
     "flat base",
     "broadening formation",
+ <<<<<<< copilot/add-more-chart-patterns
+=======
     # Candlestick patterns
     "hammer",
     "inverted hammer",
@@ -62,6 +65,7 @@ _KNOWN_PATTERNS = [
     "three black crows",
     "three inside up",
     "three inside down",
+ >>>>>>> main
 ]
 
 _HELP_TEXT = (
