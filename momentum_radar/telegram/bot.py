@@ -79,6 +79,9 @@ _HELP_TEXT = (
     "  /maxpain AAPL - Max pain calculation\n"
     "  /iv AAPL - Implied volatility analysis\n"
     "  /pcr AAPL - Put/call ratio\n\n"
+    "Volume Commands:\n"
+    "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
+    "  /analyze AAPL - Professional multi-panel analysis chart\n\n"
     "Use /status to check bot health."
 )
 
@@ -165,6 +168,11 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         elif text_lower.startswith("pcr "):
             ticker = text[len("pcr "):].strip().upper()
             await _pcr_handler_impl(update, context, ticker)
+        elif text_lower == "volspike":
+            await _volspike_handler_impl(update, context)
+        elif text_lower.startswith("analyze "):
+            ticker = text[len("analyze "):].strip().upper()
+            await _analyze_handler_impl(update, context, ticker)
         else:
             await _run_scan(update, context, text)
 
@@ -190,6 +198,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _pcr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _pcr_handler_impl(update, context, ticker)
+
+    async def _volspike_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _volspike_handler_impl(update, context)
+
+    async def _analyze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _analyze_handler_impl(update, context, ticker)
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -494,6 +509,142 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         msg = _safe_text("\n".join(lines))
         await update.message.reply_text(msg)
 
+    async def _volspike_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        await update.message.reply_text(
+            f"Scanning {len(universe)} stocks for unusual volume vs 30-day average..."
+            " This may take a minute."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.data.volume_scanner import (
+                scan_volume_spikes,
+                generate_volume_spike_chart,
+            )
+            spikes = await loop.run_in_executor(
+                None, lambda: scan_volume_spikes(universe, fetcher, top_n=15)
+            )
+        except Exception as exc:
+            logger.error("Volume spike scan failed: %s", exc)
+            await update.message.reply_text("Volume spike scan failed. Please try again later.")
+            return
+
+        if not spikes:
+            await update.message.reply_text("No unusual volume spikes detected in the current universe.")
+            return
+
+        # Text summary
+        lines = [f"Volume Spike Scanner — Top {len(spikes)} (vs 30-Day Avg)", ""]
+        for i, s in enumerate(spikes, 1):
+            direction = "▲" if s["pct_change"] >= 0 else "▼"
+            vol_str = (
+                f"{s['today_volume']/1e6:.1f}M"
+                if s["today_volume"] >= 1_000_000
+                else f"{s['today_volume']/1e3:.0f}K"
+            )
+            lines.append(
+                f"{i:2d}. {s['ticker']:6s}  RVOL {s['rvol']:.1f}x  "
+                f"{direction}{abs(s['pct_change']):.1f}%  "
+                f"${s['last_close']:.2f}  Vol {vol_str}"
+            )
+
+        msg = _safe_text("\n".join(lines))
+        await update.message.reply_text(msg)
+
+        # Chart image
+        try:
+            chart_path = await loop.run_in_executor(
+                None, lambda: generate_volume_spike_chart(spikes)
+            )
+            with open(chart_path, "rb") as photo:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=photo,
+                    caption="Volume Spike Scanner — stocks with unusual volume vs 30-day average",
+                )
+            try:
+                os.remove(chart_path)
+            except OSError:
+                pass
+        except Exception as exc:
+            logger.error("Volume spike chart failed: %s", exc)
+
+    async def _analyze_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        if not ticker:
+            await update.message.reply_text("Usage: /analyze AAPL")
+            return
+        await update.message.reply_text(f"Generating analysis chart for {ticker}...")
+        loop = asyncio.get_event_loop()
+        try:
+            daily = await loop.run_in_executor(
+                None, lambda: fetcher.get_daily_bars(ticker, period="90d")
+            )
+        except Exception as exc:
+            logger.error("Could not fetch daily bars for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not fetch data for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        if daily is None or daily.empty:
+            await update.message.reply_text(f"No price data available for {ticker}.")
+            return
+
+        # Compute RVOL
+        rvol_val: Optional[float] = None
+        try:
+            from momentum_radar.utils.indicators import compute_rvol
+            bars = await loop.run_in_executor(
+                None, lambda: fetcher.get_intraday_bars(ticker, interval="1m", period="1d")
+            )
+            rvol_val = compute_rvol(bars, daily)
+        except Exception:
+            pass
+
+        # Fundamentals for short interest / float
+        si_val: Optional[float] = None
+        float_val: Optional[float] = None
+        try:
+            fundamentals = await loop.run_in_executor(
+                None, lambda: fetcher.get_fundamentals(ticker)
+            )
+            if fundamentals:
+                si_val = fundamentals.get("short_percent_of_float")
+                float_val = fundamentals.get("float_shares")
+        except Exception:
+            pass
+
+        try:
+            from momentum_radar.utils.stock_chart import generate_analysis_chart
+            chart_path = await loop.run_in_executor(
+                None,
+                lambda: generate_analysis_chart(
+                    ticker=ticker,
+                    daily=daily,
+                    rvol=rvol_val,
+                    short_interest=si_val,
+                    float_shares=float_val,
+                ),
+            )
+            with open(chart_path, "rb") as photo:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=photo,
+                    caption=f"{ticker} — Professional Analysis Chart",
+                )
+            try:
+                os.remove(chart_path)
+            except OSError:
+                pass
+        except Exception as exc:
+            logger.error("Analysis chart failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not generate analysis chart for {ticker}: {exc}"
+            )
+
     async def _run_scan(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
@@ -574,6 +725,8 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("maxpain", _maxpain_handler))
     app.add_handler(CommandHandler("iv", _iv_handler))
     app.add_handler(CommandHandler("pcr", _pcr_handler))
+    app.add_handler(CommandHandler("volspike", _volspike_handler))
+    app.add_handler(CommandHandler("analyze", _analyze_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )

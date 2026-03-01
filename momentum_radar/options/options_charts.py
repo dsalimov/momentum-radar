@@ -100,6 +100,66 @@ def generate_volume_chart(
     ax.set_ylabel("Volume (contracts)", color="white")
     for spine in ax.spines.values():
         spine.set_edgecolor("#333333")
+
+    # Add value labels on the tallest bars for readability
+    max_vol = max(max(call_vols, default=0), max(put_vols, default=0))
+    label_threshold = max_vol * 0.25 if max_vol > 0 else 0
+    for i, (cv, pv) in enumerate(zip(call_vols, put_vols)):
+        if cv >= label_threshold and cv > 0:
+            ax.text(
+                i - width / 2, cv, f"{int(cv):,}",
+                ha="center", va="bottom", color="#00c853", fontsize=6, fontweight="bold",
+            )
+        if pv >= label_threshold and pv > 0:
+            ax.text(
+                i + width / 2, pv, f"{int(pv):,}",
+                ha="center", va="bottom", color="#ff1744", fontsize=6, fontweight="bold",
+            )
+
+    # --- Stats annotation box ---
+    total_call_vol = int(sum(call_vols))
+    total_put_vol = int(sum(put_vols))
+    pcr = total_put_vol / total_call_vol if total_call_vol > 0 else float("nan")
+    import math
+    pcr_is_nan = math.isnan(pcr)
+    pcr_str = f"{pcr:.2f}" if not pcr_is_nan else "N/A"
+    if not pcr_is_nan and pcr < 0.7:
+        pcr_bias = "BULLISH (low PCR)"
+    elif not pcr_is_nan and pcr > 1.3:
+        pcr_bias = "BEARISH (high PCR)"
+    elif not pcr_is_nan:
+        pcr_bias = "NEUTRAL"
+    else:
+        pcr_bias = "N/A"
+
+    mp_dist_str = ""
+    if max_pain_strike is not None and current_price > 0:
+        mp_dist = current_price - max_pain_strike
+        mp_pct = (mp_dist / max_pain_strike) * 100 if max_pain_strike > 0 else 0
+        direction = "above" if mp_dist > 0 else "below"
+        mp_dist_str = f"Max Pain Dist: ${abs(mp_dist):.2f} ({abs(mp_pct):.1f}% {direction})"
+
+    stats_lines = [
+        f"Call Vol: {total_call_vol:,}",
+        f"Put Vol:  {total_put_vol:,}",
+        f"PCR: {pcr_str}  [{pcr_bias}]",
+    ]
+    if mp_dist_str:
+        stats_lines.append(mp_dist_str)
+    if current_price > 0:
+        stats_lines.append(f"Price: ${current_price:.2f}")
+    if max_pain_strike is not None:
+        stats_lines.append(f"Max Pain: ${max_pain_strike:.2f}")
+
+    stats_text = "\n".join(stats_lines)
+    ax.text(
+        0.01, 0.98, stats_text,
+        transform=ax.transAxes,
+        color="white", fontsize=8,
+        verticalalignment="top", horizontalalignment="left",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#1a1a2e", alpha=0.85, edgecolor="#444444"),
+    )
+
     ax.legend(facecolor="#1a1a2e", labelcolor="white", fontsize=9)
 
     plt.tight_layout()
