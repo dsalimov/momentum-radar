@@ -13,3 +13,4 @@ scipy
 mplfinance
 matplotlib
 python-telegram-bot
+apscheduler

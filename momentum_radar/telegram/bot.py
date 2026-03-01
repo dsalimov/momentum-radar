@@ -81,7 +81,11 @@ _HELP_TEXT = (
     "  /pcr AAPL - Put/call ratio\n\n"
     "Volume Commands:\n"
     "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
-    "  /analyze AAPL - Professional multi-panel analysis chart\n\n"
+    "  /analyze AAPL - Full institutional-level analysis + AI summary\n\n"
+    "Pre-Market Intelligence:\n"
+    "  /premarket - Run pre-market scan (unusual vol + most active + options spikes)\n"
+    "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
+    "  /brief - Generate daily market intelligence brief\n\n"
     "Use /status to check bot health."
 )
 
@@ -173,6 +177,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         elif text_lower.startswith("analyze "):
             ticker = text[len("analyze "):].strip().upper()
             await _analyze_handler_impl(update, context, ticker)
+        elif text_lower == "premarket":
+            await _premarket_handler_impl(update, context)
+        elif text_lower.startswith("squeeze"):
+            ticker = text[len("squeeze"):].strip().upper()
+            await _squeeze_handler_impl(update, context, ticker)
+        elif text_lower == "brief":
+            await _brief_handler_impl(update, context)
         else:
             await _run_scan(update, context, text)
 
@@ -205,6 +216,16 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _analyze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _analyze_handler_impl(update, context, ticker)
+
+    async def _premarket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _premarket_handler_impl(update, context)
+
+    async def _squeeze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _squeeze_handler_impl(update, context, ticker)
+
+    async def _brief_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _brief_handler_impl(update, context)
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -576,74 +597,209 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         if not ticker:
             await update.message.reply_text("Usage: /analyze AAPL")
             return
-        await update.message.reply_text(f"Generating analysis chart for {ticker}...")
+        await update.message.reply_text(f"Running full institutional analysis for {ticker}…")
         loop = asyncio.get_event_loop()
         try:
+            from momentum_radar.premarket.full_analysis import run_full_analysis, format_full_analysis
+            analysis = await loop.run_in_executor(
+                None, lambda: run_full_analysis(ticker, fetcher)
+            )
+        except Exception as exc:
+            logger.error("Full analysis failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not run analysis for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        text_report = format_full_analysis(analysis)
+        msg = _safe_text(text_report)
+        # Telegram message limit is 4096 characters – split if needed
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+        # Also send the chart if data is available
+        try:
+            daily = analysis.get("_daily")  # not stored; re-fetch below
             daily = await loop.run_in_executor(
                 None, lambda: fetcher.get_daily_bars(ticker, period="90d")
             )
-        except Exception as exc:
-            logger.error("Could not fetch daily bars for %s: %s", ticker, exc)
-            await update.message.reply_text(
-                f"Could not fetch data for {ticker}. Make sure it's a valid US stock ticker."
-            )
-            return
-
-        if daily is None or daily.empty:
-            await update.message.reply_text(f"No price data available for {ticker}.")
-            return
-
-        # Compute RVOL
-        rvol_val: Optional[float] = None
-        try:
-            from momentum_radar.utils.indicators import compute_rvol
-            bars = await loop.run_in_executor(
-                None, lambda: fetcher.get_intraday_bars(ticker, interval="1m", period="1d")
-            )
-            rvol_val = compute_rvol(bars, daily)
-        except Exception:
-            pass
-
-        # Fundamentals for short interest / float
-        si_val: Optional[float] = None
-        float_val: Optional[float] = None
-        try:
-            fundamentals = await loop.run_in_executor(
-                None, lambda: fetcher.get_fundamentals(ticker)
-            )
-            if fundamentals:
-                si_val = fundamentals.get("short_percent_of_float")
-                float_val = fundamentals.get("float_shares")
-        except Exception:
-            pass
-
-        try:
-            from momentum_radar.utils.stock_chart import generate_analysis_chart
-            chart_path = await loop.run_in_executor(
-                None,
-                lambda: generate_analysis_chart(
-                    ticker=ticker,
-                    daily=daily,
-                    rvol=rvol_val,
-                    short_interest=si_val,
-                    float_shares=float_val,
-                ),
-            )
-            with open(chart_path, "rb") as photo:
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=photo,
-                    caption=f"{ticker} — Professional Analysis Chart",
+            if daily is not None and not daily.empty:
+                from momentum_radar.utils.stock_chart import generate_analysis_chart
+                chart_path = await loop.run_in_executor(
+                    None,
+                    lambda: generate_analysis_chart(
+                        ticker=ticker,
+                        daily=daily,
+                        rvol=analysis.get("technical", {}).get("rvol"),
+                        short_interest=analysis.get("flow", {}).get("short_interest_pct"),
+                        float_shares=analysis.get("market_data", {}).get("float_shares"),
+                    ),
                 )
-            try:
-                os.remove(chart_path)
-            except OSError:
-                pass
+                with open(chart_path, "rb") as photo:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=photo,
+                        caption=f"{ticker} — Professional Analysis Chart",
+                    )
+                try:
+                    os.remove(chart_path)
+                except OSError:
+                    pass
         except Exception as exc:
-            logger.error("Analysis chart failed for %s: %s", ticker, exc)
-            await update.message.reply_text(
-                f"Could not generate analysis chart for {ticker}: {exc}"
+            logger.debug("Analysis chart skipped for %s: %s", ticker, exc)
+
+    async def _premarket_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        await update.message.reply_text(
+            f"Running pre-market scan on {len(universe)} stocks… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.scanner import (
+                scan_unusual_volume,
+                scan_most_active,
+                scan_options_spikes,
             )
+            vol_spikes = await loop.run_in_executor(
+                None, lambda: scan_unusual_volume(universe, fetcher, top_n=10)
+            )
+            active = await loop.run_in_executor(
+                None, lambda: scan_most_active(universe, fetcher, top_n=10)
+            )
+            opt_spikes = await loop.run_in_executor(
+                None, lambda: scan_options_spikes(universe[:100], fetcher, top_n=10)
+            )
+        except Exception as exc:
+            logger.error("Pre-market scan failed: %s", exc)
+            await update.message.reply_text("Pre-market scan failed. Please try again later.")
+            return
+
+        lines = ["PRE-MARKET SCAN RESULTS", ""]
+
+        lines.append("UNUSUAL VOLUME (RVOL >= 2x)")
+        if vol_spikes:
+            for s in vol_spikes[:10]:
+                direction = "+" if s["pct_change"] >= 0 else ""
+                lines.append(
+                    f"  {s['ticker']:6s}  RVOL {s['rvol']:.1f}x  "
+                    f"{direction}{s['pct_change']:.1f}%  ${s['last_close']}"
+                )
+        else:
+            lines.append("  None detected.")
+        lines.append("")
+
+        lines.append("TOP GAINERS")
+        for g in active.get("top_gainers", [])[:5]:
+            lines.append(f"  {g['ticker']:6s}  +{g['pct_change']:.1f}%  ${g['last_close']}")
+        lines.append("")
+
+        lines.append("TOP LOSERS")
+        for l in active.get("top_losers", [])[:5]:
+            lines.append(f"  {l['ticker']:6s}  {l['pct_change']:.1f}%  ${l['last_close']}")
+        lines.append("")
+
+        lines.append("OPTIONS VOLUME SPIKES")
+        if opt_spikes:
+            for o in opt_spikes[:5]:
+                lines.append(
+                    f"  {o['ticker']:6s}  C/P {o['cp_ratio']}  "
+                    f"Calls {o['call_volume']:,}  Puts {o['put_volume']:,}  "
+                    f"Bias: {o['bias']}"
+                )
+        else:
+            lines.append("  None detected.")
+
+        msg = _safe_text("\n".join(lines))
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _squeeze_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        loop = asyncio.get_event_loop()
+        if ticker:
+            # Single-ticker full squeeze report
+            await update.message.reply_text(f"Running squeeze analysis for {ticker}…")
+            try:
+                from momentum_radar.premarket.squeeze_detector import (
+                    build_squeeze_report,
+                    format_squeeze_report,
+                )
+                report = await loop.run_in_executor(
+                    None, lambda: build_squeeze_report(ticker, fetcher)
+                )
+            except Exception as exc:
+                logger.error("Squeeze report failed for %s: %s", ticker, exc)
+                await update.message.reply_text(f"Could not run squeeze analysis for {ticker}.")
+                return
+
+            if not report:
+                await update.message.reply_text(f"No data available for {ticker}.")
+                return
+
+            msg = _safe_text(format_squeeze_report(report))
+            await update.message.reply_text(msg)
+        else:
+            # Scan universe for top candidates
+            await update.message.reply_text(
+                f"Scanning {len(universe[:100])} stocks for short squeeze setups…"
+            )
+            try:
+                from momentum_radar.premarket.squeeze_detector import (
+                    scan_squeeze_candidates,
+                    format_squeeze_report,
+                )
+                candidates = await loop.run_in_executor(
+                    None,
+                    lambda: scan_squeeze_candidates(universe[:100], fetcher, min_score=30, top_n=10),
+                )
+            except Exception as exc:
+                logger.error("Squeeze scan failed: %s", exc)
+                await update.message.reply_text("Squeeze scan failed. Please try again.")
+                return
+
+            if not candidates:
+                await update.message.reply_text("No squeeze candidates above threshold found.")
+                return
+
+            lines = ["TOP SHORT SQUEEZE CANDIDATES", ""]
+            for i, c in enumerate(candidates, 1):
+                si_str = f"{c['short_interest_pct']:.1%}" if c.get("short_interest_pct") is not None else "N/A"
+                dtc_str = f"{c['days_to_cover']:.1f}" if c.get("days_to_cover") is not None else "N/A"
+                lines.append(
+                    f"{i:2d}. {c['ticker']:6s}  Score {c['squeeze_score']}%  "
+                    f"SI {si_str}  DTC {dtc_str}  Float {c.get('float_str', 'N/A')}  "
+                    f"RVOL {c.get('rvol', 'N/A')}x"
+                )
+                lines.append(f"    {c['squeeze_label']}")
+            lines.append("")
+            lines.append("Use /squeeze TICKER for a full report on any candidate.")
+
+            msg = _safe_text("\n".join(lines))
+            await update.message.reply_text(msg)
+
+    async def _brief_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        await update.message.reply_text(
+            "Generating market intelligence brief… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.briefing import generate_market_brief
+            brief = await loop.run_in_executor(
+                None,
+                lambda: generate_market_brief(universe, fetcher, session_label="On-Demand"),
+            )
+        except Exception as exc:
+            logger.error("Market brief failed: %s", exc)
+            await update.message.reply_text("Could not generate market brief. Please try again.")
+            return
+
+        msg = _safe_text(brief)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
 
     async def _run_scan(
         update: Update,
@@ -727,6 +883,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("pcr", _pcr_handler))
     app.add_handler(CommandHandler("volspike", _volspike_handler))
     app.add_handler(CommandHandler("analyze", _analyze_handler))
+    app.add_handler(CommandHandler("premarket", _premarket_handler))
+    app.add_handler(CommandHandler("squeeze", _squeeze_handler))
+    app.add_handler(CommandHandler("brief", _brief_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
