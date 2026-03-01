@@ -56,7 +56,8 @@ def get_options_chain(ticker: str, expiry: str = None) -> dict:
             puts[col] = puts[col].fillna(0)
 
         info = stock.fast_info
-        current_price = getattr(info, "last_price", None) or 0.0
+        _price = getattr(info, "last_price", None)
+        current_price = float(_price) if _price is not None else 0.0
 
         return {
             "calls": calls,
@@ -170,7 +171,8 @@ def get_options_summary(ticker: str) -> dict:
             return {}
 
         info = stock.fast_info
-        current_price = float(getattr(info, "last_price", None) or 0.0)
+        _price = getattr(info, "last_price", None)
+        current_price = float(_price) if _price is not None else 0.0
 
         all_calls = []
         all_puts = []
@@ -292,7 +294,8 @@ def get_options_flow(ticker: str) -> dict:
             return {}
 
         info = stock.fast_info
-        current_price = float(getattr(info, "last_price", None) or 0.0)
+        _price = getattr(info, "last_price", None)
+        current_price = float(_price) if _price is not None else 0.0
 
         all_calls = []
         all_puts = []
@@ -553,7 +556,8 @@ def get_max_pain(ticker: str, expiry: str = None) -> dict:
                 max_pain_strike = strike
 
         info = stock.fast_info
-        current_price = float(getattr(info, "last_price", None) or 0.0)
+        _price = getattr(info, "last_price", None)
+        current_price = float(_price) if _price is not None else 0.0
 
         distance = current_price - max_pain_strike if max_pain_strike is not None else 0.0
         pct_distance = (distance / max_pain_strike * 100) if max_pain_strike else 0.0
@@ -591,7 +595,8 @@ def get_iv_analysis(ticker: str) -> dict:
             return {}
 
         info = stock.fast_info
-        current_price = float(getattr(info, "last_price", None) or 0.0)
+        _price = getattr(info, "last_price", None)
+        current_price = float(_price) if _price is not None else 0.0
 
         # Collect ATM IV per expiry for term structure
         atm_ivs = []
