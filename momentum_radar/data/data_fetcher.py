@@ -140,7 +140,7 @@ class YFinanceDataFetcher(BaseDataFetcher):
             if df is None or df.empty:
                 logger.warning("No intraday data returned for %s", ticker)
                 return None
-            df.columns = [c.lower() for c in df.columns]
+            _normalise_yf_columns(df)
             return df
         except Exception as exc:
             logger.error("Error fetching intraday bars for %s: %s", ticker, exc)
@@ -165,7 +165,7 @@ class YFinanceDataFetcher(BaseDataFetcher):
             if df is None or df.empty:
                 logger.warning("No daily data returned for %s", ticker)
                 return None
-            df.columns = [c.lower() for c in df.columns]
+            _normalise_yf_columns(df)
             return df
         except Exception as exc:
             logger.error("Error fetching daily bars for %s: %s", ticker, exc)
