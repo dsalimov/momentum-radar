@@ -650,6 +650,12 @@ _PATTERN_REGISTRY: Dict[str, Callable[["pd.DataFrame"], Optional[PatternResult]]
     "falling wedge": lambda df: _detect_wedge(df, rising=False),
 }
 
+# Register candlestick patterns
+from momentum_radar.patterns.candlestick_detector import CANDLESTICK_PATTERNS  # noqa: E402
+
+for _cs_name, _cs_func in CANDLESTICK_PATTERNS.items():
+    _PATTERN_REGISTRY[_cs_name] = _cs_func
+
 
 def available_patterns() -> List[str]:
     """Return the list of recognised pattern names."""
@@ -745,8 +751,9 @@ def scan_for_pattern(
             match = detect_pattern(pattern_name, df)
             if match:
                 state = match.get("state")
-                # Filter: only FORMING or NEAR_BREAK
-                if state not in (PatternState.FORMING, PatternState.NEAR_BREAK):
+                # Filter: only FORMING or NEAR_BREAK (accept both enum and string)
+                state_val = state.value if hasattr(state, "value") else state
+                if state_val not in ("forming", "near_break"):
                     continue
                 match["ticker"] = ticker
                 match["df"] = df
