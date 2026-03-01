@@ -143,6 +143,74 @@ _SEED_UNIVERSE: List[str] = [
     # --- EVs / Clean Energy ---
     "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI", "PLUG", "BLNK",
     "CHPT", "EVGO", "FSR", "GOEV", "NKLA", "REE", "RIDE",
+    # --- Popular mid-cap & growth stocks ---
+    "CRWD", "ZS", "SNOW", "DDOG", "NET", "MDB", "GTLB", "BILL", "HUBS",
+    "VEEV", "COUP", "APPN", "CFLT", "AI", "PATH", "PLTR", "RBLX",
+    "DUOL", "CELH", "ONON", "DECK", "LULU", "CROX", "SKX",
+    "SHAK", "WING", "TXRH", "CMG", "DPZ", "YUM", "MCD", "SBUX",
+    "MSCI", "SPGI", "ICE", "CME", "CBOE", "MCO",
+    # --- Biotech & Healthcare growth ---
+    "GILD", "ALNY", "SGEN", "IONS", "EXAS", "PCVX", "RXRX",
+    "LEGN", "BEAM", "EDIT", "NTLA", "CRSP", "BLUE",
+    "ACAD", "RARE", "PTGX", "KYMR", "IMVT", "ARDX",
+    "HALO", "ITCI", "NTRA", "TMDX", "IRTC",
+    # --- Energy & Commodities ---
+    "MPC", "VLO", "PSX", "HES", "APA", "DVN", "FANG", "OVV",
+    "CLR", "COP", "EOG", "PXD", "MRO", "NBL",
+    "FCX", "VALE", "RIO", "BHP", "AA", "NUE", "STLD", "RS",
+    "NEM", "AEM", "GOLD", "KGC", "AG",
+    # --- Industrials & Defense ---
+    "LHX", "TDG", "HWM", "WWD", "AXON", "LDOS", "SAIC", "CACI",
+    "HEICO", "TXT", "SPR", "HII", "KTOS",
+    "PWR", "MYR", "FAST", "MSC", "GWW", "WSO", "POOL",
+    "TREX", "IBP", "NVR", "PHM", "TOL", "MDC", "KBH",
+    # --- Consumer & Retail ---
+    "W", "ETSY", "CHWY", "CVNA", "AN", "KMX",
+    "TGT", "BJ", "GO", "ACI", "SFM", "PFGC",
+    "ELF", "ULTA", "IMKTA", "COTY", "REV",
+    # --- Financial & Insurance ---
+    "RJF", "LPL", "LPLA", "SEIC", "VRTS", "AMG",
+    "EQH", "BHF", "GL", "AFG", "FGL", "ERIE",
+    "PRGO", "OMF", "CACC", "DFS", "SYF", "COF", "ALLY",
+    # --- Technology hardware & semis ---
+    "AEHR", "ONTO", "MKSI", "CAMT", "ACLS", "AMBA",
+    "SLAB", "WOLF", "AEVA", "MVIS", "LSCC", "SMTC",
+    "RMBS", "IOSP", "FORM", "ICHR",
+    # --- REITs ---
+    "MPW", "STAG", "TRNO", "REXR", "EGP", "FR", "LXP",
+    "KIM", "REG", "BRX", "ROIC", "KITE",
+    "IRT", "NHI", "SBRA", "HR", "OHI",
+    # --- Software & SaaS ---
+    "CWAN", "ALRM", "FROG", "S", "SMAR", "TOST", "FOUR",
+    "TASK", "ASAN", "MNDY", "FRSH", "WEX", "PCOR",
+    "JAMF", "SWTX", "BRZE", "LSPD", "THNX",
+    # --- Media & Communications ---
+    "LYV", "WBD", "PARA", "FOXA", "FUBO", "STRM",
+    "NWSA", "NWS", "GTN", "SGRY", "ENTG",
+    # --- Russell 2000 high-volume favorites ---
+    "TIGR", "MOMO", "YY", "BEKE", "TUYA", "IQ", "BILI",
+    "SPCE", "LIDR", "MNTS", "ASTR", "RKT",
+    "CLOV", "WISH", "BARK", "OPAD", "PAYA", "ONDS",
+    "DPST", "NAIL", "HIBL", "HIBS", "TNA", "TZA",
+    # --- Popular momentum & retail-trader stocks ---
+    "NVAX", "SAVA", "ATER", "GFAI", "HCDI", "LMNL",
+    "SENS", "BFRI", "MMAT", "CRTX", "PRAX",
+    # --- Sector/Leveraged ETFs ---
+    "BOIL", "KOLD", "UCO", "SCO", "DUST", "NUGT",
+    "JNUG", "JDST", "TECL", "TECS", "BULZ", "BERZ",
+    "FNGU", "FNGS", "WEBL", "WEBS", "CURE", "LABU",
+    "FAS", "FAZ", "ERX", "ERY", "GUSH", "DRIP",
+    "SPXL", "SPXS", "UPRO", "SDOW", "UDOW", "UMDD",
+    # --- International ADRs (high US volume) ---
+    "BABA", "JD", "PDD", "BIDU", "NTES", "TME", "FUTU",
+    "SE", "GRAB", "GOTO", "MELI", "DESP", "VTEX",
+    "SAP", "TM", "HMC", "SONY", "NVO", "AZN", "GSK",
+    "SNY", "RHHBY", "BP", "SHEL", "TTE", "ENB", "SU",
+    "BCS", "DB", "CS", "ING", "UBS", "HSBC",
+    # --- Thematic / Special situation ---
+    "IONQ", "QUBT", "QMCO", "RGTI", "ARQQ",
+    "JOBY", "ACHR", "LILM", "EVTL",
+    "RXDX", "ACMR", "GTHX", "NUVL", "KROS",
 ]
 
 
