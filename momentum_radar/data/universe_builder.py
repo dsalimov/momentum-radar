@@ -9,10 +9,61 @@ in :class:`~momentum_radar.config.UniverseConfig`.
 import logging
 from typing import List
 
+import pandas as pd
+
 from momentum_radar.config import config
 from momentum_radar.data.data_fetcher import BaseDataFetcher
 
 logger = logging.getLogger(__name__)
+
+_SP500_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+_NASDAQ100_WIKI_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
+
+
+def fetch_index_constituents() -> List[str]:
+    """Fetch current S&P 500 and NASDAQ-100 tickers from Wikipedia.
+
+    Returns a deduplicated list of ticker symbols.  Falls back to
+    :data:`_SEED_UNIVERSE` if the S&P 500 page is unreachable or cannot be
+    parsed.  Returns S&P 500 tickers only if the NASDAQ-100 page fails.
+
+    Returns:
+        List of ticker symbols from the two indices, or the static seed
+        universe on failure.
+    """
+    tickers: List[str] = []
+    try:
+        sp500_tables = pd.read_html(_SP500_WIKI_URL, attrs={"id": "constituents"})
+        sp500_df = sp500_tables[0]
+        # Column is "Symbol" on the S&P 500 Wikipedia page
+        sp500_tickers = sp500_df["Symbol"].dropna().tolist()
+        # Wikipedia uses "." for BRK.B / BRK.A; yfinance uses "-"
+        sp500_tickers = [t.replace(".", "-") for t in sp500_tickers]
+        tickers.extend(sp500_tickers)
+        logger.info("Fetched %d S&P 500 tickers from Wikipedia", len(sp500_tickers))
+    except Exception as exc:
+        logger.warning("Failed to fetch S&P 500 constituents from Wikipedia: %s", exc)
+        return _SEED_UNIVERSE
+
+    try:
+        ndx_tables = pd.read_html(_NASDAQ100_WIKI_URL, attrs={"id": "constituents"})
+        ndx_df = ndx_tables[0]
+        # Column is "Ticker" on the NASDAQ-100 Wikipedia page
+        ndx_tickers = ndx_df["Ticker"].dropna().tolist()
+        tickers.extend(ndx_tickers)
+        logger.info("Fetched %d NASDAQ-100 tickers from Wikipedia", len(ndx_tickers))
+    except Exception as exc:
+        logger.warning(
+            "Failed to fetch NASDAQ-100 constituents from Wikipedia: %s", exc
+        )
+
+    if not tickers:
+        logger.warning("No tickers fetched from Wikipedia; using seed universe")
+        return _SEED_UNIVERSE
+
+    # Deduplicate while preserving order
+    return list(dict.fromkeys(tickers))
+
 
 # Baseline list of highly-liquid US equities used as the seed universe.
 # In a production system this would be fetched dynamically (e.g. from an
@@ -119,7 +170,7 @@ class UniverseBuilder:
             List of filtered ticker symbols.
         """
         cfg = config.universe
-        candidates = list(dict.fromkeys(_SEED_UNIVERSE))  # deduplicate, preserve order
+        candidates = fetch_index_constituents()  # dynamic; falls back to seed
         filtered: List[str] = []
 
         for ticker in candidates:
