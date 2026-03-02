@@ -41,6 +41,7 @@ _W_CALL_SPIKE = 15       # call volume > 2× avg
 _W_BREAKOUT = 15         # breakout / bullish technical structure
 _W_GAMMA_RAMP = 10       # call/put ratio ≥ 2
 _W_VOL_EXPANSION = 10    # RVOL > 3×
+_W_HIGH_BORROW = 10      # estimated borrow fee > 15 % annualised
 
 
 # ---------------------------------------------------------------------------
@@ -55,17 +56,19 @@ def compute_squeeze_score(
     rvol: Optional[float],
     cp_ratio: Optional[float],
     breakout: bool = False,
+    borrow_fee_pct: Optional[float] = None,
 ) -> Dict:
     """Compute a squeeze probability score (0–100).
 
     Args:
-        short_pct:      Short interest as a decimal (e.g. 0.25 = 25 %).
-        days_to_cover:  Days-to-cover (short ratio).
-        float_shares:   Float size in shares.
-        call_spike:     Call volume / 30-day avg call volume.
-        rvol:           Relative volume.
-        cp_ratio:       Call/put ratio.
-        breakout:       ``True`` if a bullish breakout pattern is detected.
+        short_pct:       Short interest as a decimal (e.g. 0.25 = 25 %).
+        days_to_cover:   Days-to-cover (short ratio).
+        float_shares:    Float size in shares.
+        call_spike:      Call volume / 30-day avg call volume.
+        rvol:            Relative volume.
+        cp_ratio:        Call/put ratio.
+        breakout:        ``True`` if a bullish breakout pattern is detected.
+        borrow_fee_pct:  Estimated annualised borrow fee rate (e.g. 0.25 = 25 %).
 
     Returns:
         Dict with keys ``score``, ``factors``, ``probability_pct``, ``label``.
@@ -100,6 +103,10 @@ def compute_squeeze_score(
     if rvol is not None and rvol > 3.0:
         score += _W_VOL_EXPANSION
         factors.append(f"Volume expansion {rvol:.1f}x > 3x (+{_W_VOL_EXPANSION})")
+
+    if borrow_fee_pct is not None and borrow_fee_pct > 0.15:
+        score += _W_HIGH_BORROW
+        factors.append(f"High est. borrow fee ~{borrow_fee_pct:.0%} p.a. (+{_W_HIGH_BORROW})")
 
     score = min(score, 100)
 
@@ -196,6 +203,9 @@ def build_squeeze_report(ticker: str, fetcher: BaseDataFetcher) -> Optional[Dict
     breakout_level = _get_breakout_level(daily)
     resistance = _get_resistance(daily)
 
+    # ---- Borrow fee estimate ----
+    borrow_fee_estimate = _estimate_borrow_fee(short_pct)
+
     # ---- Squeeze score ----
     sq = compute_squeeze_score(
         short_pct=short_pct,
@@ -205,6 +215,7 @@ def build_squeeze_report(ticker: str, fetcher: BaseDataFetcher) -> Optional[Dict
         rvol=rvol,
         cp_ratio=cp_ratio,
         breakout=breakout,
+        borrow_fee_pct=borrow_fee_estimate,
     )
 
     # ---- ATR for scenario targets ----
@@ -238,6 +249,7 @@ def build_squeeze_report(ticker: str, fetcher: BaseDataFetcher) -> Optional[Dict
         "squeeze_probability_pct": sq["probability_pct"],
         "squeeze_label": sq["label"],
         "squeeze_factors": sq["factors"],
+        "borrow_fee_estimate": borrow_fee_estimate,
         "bull_target1": bull_target1,
         "bull_target2": bull_target2,
         "bear_target": bear_target,
@@ -299,6 +311,11 @@ def format_squeeze_report(report: Dict) -> str:
     bs_str = "YES" if report.get("breakout") else "NO"
     brk_lvl = f"${report['breakout_level']:.2f}" if report.get("breakout_level") else "N/A"
     res_lvl = f"${report['resistance']:.2f}" if report.get("resistance") else "N/A"
+    borrow_str = (
+        f"~{report['borrow_fee_estimate']:.0%} p.a. (est.)"
+        if report.get("borrow_fee_estimate") is not None
+        else "N/A"
+    )
 
     bt1 = f"${report['bull_target1']:.2f}" if report.get("bull_target1") else "N/A"
     bt2 = f"${report['bull_target2']:.2f}" if report.get("bull_target2") else "N/A"
@@ -310,7 +327,7 @@ def format_squeeze_report(report: Dict) -> str:
         f"Short Interest: {si_str}",
         f"Float: {report.get('float_str', 'N/A')}",
         f"Days to Cover: {dtc_str}",
-        f"Cost to Borrow: N/A",
+        f"Cost to Borrow (est.): {borrow_str}",
         f"Utilization: N/A",
         f"Recent Volume vs Avg: {rvol_str}",
         f"Call/Put Ratio: {cp_str}",
@@ -348,6 +365,30 @@ def format_squeeze_report(report: Dict) -> str:
 # ---------------------------------------------------------------------------
 # Internal technical helpers
 # ---------------------------------------------------------------------------
+
+def _estimate_borrow_fee(short_pct: Optional[float]) -> Optional[float]:
+    """Estimate the annualised borrow fee rate from short interest level.
+
+    Short interest is a strong proxy for borrow difficulty: heavily-shorted
+    stocks typically carry high locate/borrow costs.
+
+    Args:
+        short_pct: Short interest as a decimal (e.g. 0.30 = 30 %).
+
+    Returns:
+        Estimated annualised borrow fee as a decimal, or ``None`` if
+        ``short_pct`` is unavailable.
+    """
+    if short_pct is None:
+        return None
+    if short_pct >= 0.50:
+        return 0.50
+    if short_pct >= 0.30:
+        return 0.25
+    if short_pct >= 0.15:
+        return 0.10
+    return 0.02
+
 
 def _detect_breakout(daily: pd.DataFrame) -> bool:
     """Simple breakout detection: last close > 20-day high of prior bars."""

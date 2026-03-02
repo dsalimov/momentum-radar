@@ -159,6 +159,49 @@ class TestComputeSqueezeScore:
         assert isinstance(result["score"], int)
         assert result["score"] == 0
 
+    def test_high_borrow_fee_adds_to_score(self):
+        from momentum_radar.premarket.squeeze_detector import compute_squeeze_score
+
+        # Only borrow_fee_pct > 15% triggers → +10
+        result_with = compute_squeeze_score(
+            short_pct=None,
+            days_to_cover=None,
+            float_shares=None,
+            call_spike=None,
+            rvol=None,
+            cp_ratio=None,
+            breakout=False,
+            borrow_fee_pct=0.25,
+        )
+        result_without = compute_squeeze_score(
+            short_pct=None,
+            days_to_cover=None,
+            float_shares=None,
+            call_spike=None,
+            rvol=None,
+            cp_ratio=None,
+            breakout=False,
+            borrow_fee_pct=None,
+        )
+        assert result_with["score"] == 10
+        assert result_without["score"] == 0
+        assert any("borrow" in f.lower() for f in result_with["factors"])
+
+    def test_low_borrow_fee_does_not_trigger(self):
+        from momentum_radar.premarket.squeeze_detector import compute_squeeze_score
+
+        result = compute_squeeze_score(
+            short_pct=None,
+            days_to_cover=None,
+            float_shares=None,
+            call_spike=None,
+            rvol=None,
+            cp_ratio=None,
+            breakout=False,
+            borrow_fee_pct=0.05,  # 5% – below 15% threshold
+        )
+        assert result["score"] == 0
+
 
 # ---------------------------------------------------------------------------
 # build_squeeze_report
@@ -209,9 +252,25 @@ class TestBuildSqueezeReport:
         assert report is not None
         for field in (
             "ticker", "squeeze_score", "squeeze_probability_pct",
-            "squeeze_label", "squeeze_factors",
+            "squeeze_label", "squeeze_factors", "borrow_fee_estimate",
         ):
             assert field in report
+
+    def test_borrow_fee_estimate_populated_from_short_interest(self):
+        from momentum_radar.premarket.squeeze_detector import build_squeeze_report
+
+        fetcher = _make_fetcher(
+            fundamentals={
+                "float_shares": 20e6,
+                "short_percent_of_float": 0.40,  # 40% SI → ~25% estimated borrow
+                "short_ratio": 5.0,
+                "shares_outstanding": 25e6,
+            }
+        )
+        report = build_squeeze_report("GME", fetcher)
+        assert report is not None
+        assert report["borrow_fee_estimate"] is not None
+        assert report["borrow_fee_estimate"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +303,57 @@ class TestFormatSqueezeReport:
         text = format_squeeze_report(report)
         assert "Bull Case" in text
         assert "Bear Case" in text
+
+    def test_contains_cost_to_borrow(self):
+        from momentum_radar.premarket.squeeze_detector import (
+            build_squeeze_report,
+            format_squeeze_report,
+        )
+
+        fetcher = _make_fetcher(
+            fundamentals={
+                "float_shares": 20e6,
+                "short_percent_of_float": 0.40,  # 40% SI → borrow fee populated
+                "short_ratio": 5.0,
+                "shares_outstanding": 25e6,
+            }
+        )
+        report = build_squeeze_report("HYPE", fetcher)
+        assert report is not None
+        text = format_squeeze_report(report)
+        assert "Cost to Borrow" in text
+        assert "est." in text
+
+
+# ---------------------------------------------------------------------------
+# _estimate_borrow_fee
+# ---------------------------------------------------------------------------
+
+class TestEstimateBorrowFee:
+    def test_none_returns_none(self):
+        from momentum_radar.premarket.squeeze_detector import _estimate_borrow_fee
+
+        assert _estimate_borrow_fee(None) is None
+
+    def test_very_high_si(self):
+        from momentum_radar.premarket.squeeze_detector import _estimate_borrow_fee
+
+        assert _estimate_borrow_fee(0.60) == 0.50
+
+    def test_high_si(self):
+        from momentum_radar.premarket.squeeze_detector import _estimate_borrow_fee
+
+        assert _estimate_borrow_fee(0.35) == 0.25
+
+    def test_moderate_si(self):
+        from momentum_radar.premarket.squeeze_detector import _estimate_borrow_fee
+
+        assert _estimate_borrow_fee(0.20) == 0.10
+
+    def test_low_si(self):
+        from momentum_radar.premarket.squeeze_detector import _estimate_borrow_fee
+
+        assert _estimate_borrow_fee(0.05) == 0.02
 
 
 # ---------------------------------------------------------------------------
