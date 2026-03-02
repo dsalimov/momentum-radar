@@ -83,9 +83,14 @@ _HELP_TEXT = (
     "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
     "  /analyze AAPL - Full institutional-level analysis + AI summary\n\n"
     "Pre-Market Intelligence:\n"
-    "  /premarket - Run pre-market scan (unusual vol + most active + options spikes)\n"
+    "  /premarket - Run pre-market scan (unusual vol + most active volume leaders + options spikes)\n"
     "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
     "  /brief - Generate daily market intelligence brief\n\n"
+    "Fundamentals & Earnings:\n"
+    "  /fundamentals AAPL - Income statement, cash flow, assets & liabilities\n"
+    "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
+    "TradingView:\n"
+    "  /tradingview AAPL - TradingView chart links + technical consensus signals\n\n"
     "News Commands:\n"
     "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
     "  /marketnews - Full market-wide news search with AI summary\n\n"
@@ -192,6 +197,15 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             await _news_handler_impl(update, context, ticker)
         elif text_lower == "marketnews":
             await _marketnews_handler_impl(update, context)
+        elif text_lower.startswith("fundamentals "):
+            ticker = text[len("fundamentals "):].strip().upper()
+            await _fundamentals_handler_impl(update, context, ticker)
+        elif text_lower.startswith("earnings "):
+            ticker = text[len("earnings "):].strip().upper()
+            await _earnings_handler_impl(update, context, ticker)
+        elif text_lower.startswith("tradingview "):
+            ticker = text[len("tradingview "):].strip().upper()
+            await _tradingview_handler_impl(update, context, ticker)
         else:
             await _run_scan(update, context, text)
 
@@ -241,6 +255,18 @@ async def start_telegram_bot() -> None:  # pragma: no cover
 
     async def _marketnews_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _marketnews_handler_impl(update, context)
+
+    async def _fundamentals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _fundamentals_handler_impl(update, context, ticker)
+
+    async def _earnings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _earnings_handler_impl(update, context, ticker)
+
+    async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _tradingview_handler_impl(update, context, ticker)
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -627,6 +653,21 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             return
 
         text_report = format_full_analysis(analysis)
+
+        # Append TradingView section
+        try:
+            from momentum_radar.premarket.tradingview import (
+                get_tradingview_analysis,
+                format_tradingview_section,
+            )
+            tv_analysis = await loop.run_in_executor(
+                None, lambda: get_tradingview_analysis(ticker)
+            )
+            tv_section = format_tradingview_section(ticker, tv_analysis)
+            text_report = text_report + "\n\n" + tv_section
+        except Exception as exc:
+            logger.debug("TradingView section skipped for %s: %s", ticker, exc)
+
         msg = _safe_text(text_report)
         # Telegram message limit is 4096 characters – split if needed
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
@@ -696,12 +737,28 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         if vol_spikes:
             for s in vol_spikes[:10]:
                 direction = "+" if s["pct_change"] >= 0 else ""
+                vol_str = (
+                    f"{s['today_volume'] / 1e6:.1f}M"
+                    if s["today_volume"] >= 1_000_000
+                    else f"{s['today_volume'] / 1e3:.0f}K"
+                )
                 lines.append(
                     f"  {s['ticker']:6s}  RVOL {s['rvol']:.1f}x  "
-                    f"{direction}{s['pct_change']:.1f}%  ${s['last_close']}"
+                    f"{direction}{s['pct_change']:.1f}%  ${s['last_close']}  Vol {vol_str}"
                 )
         else:
             lines.append("  None detected.")
+        lines.append("")
+
+        lines.append("MOST ACTIVE BY VOLUME")
+        for v in active.get("highest_volume", [])[:5]:
+            vol_str = (
+                f"{v['today_volume'] / 1e6:.1f}M"
+                if v["today_volume"] >= 1_000_000
+                else f"{v['today_volume'] / 1e3:.0f}K"
+            )
+            direction = "+" if v["pct_change"] >= 0 else ""
+            lines.append(f"  {v['ticker']:6s}  Vol {vol_str}  {direction}{v['pct_change']:.1f}%  ${v['last_close']}")
         lines.append("")
 
         lines.append("TOP GAINERS")
@@ -885,6 +942,93 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
             await update.message.reply_text(chunk)
 
+    async def _fundamentals_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        if not ticker:
+            await update.message.reply_text("Usage: /fundamentals AAPL")
+            return
+        await update.message.reply_text(
+            f"Fetching financial statements for {ticker}… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.fundamentals import (
+                get_financial_statements,
+                format_fundamentals_report,
+            )
+            data = await loop.run_in_executor(
+                None, lambda: get_financial_statements(ticker)
+            )
+        except Exception as exc:
+            logger.error("Fundamentals fetch failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not fetch financial statements for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        report = format_fundamentals_report(data)
+        msg = _safe_text(report)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _earnings_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        if not ticker:
+            await update.message.reply_text("Usage: /earnings AAPL")
+            return
+        await update.message.reply_text(
+            f"Analyzing earnings for {ticker}… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.fundamentals import (
+                get_earnings_analysis,
+                format_earnings_report,
+            )
+            data = await loop.run_in_executor(
+                None, lambda: get_earnings_analysis(ticker)
+            )
+        except Exception as exc:
+            logger.error("Earnings analysis failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not fetch earnings data for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        report = format_earnings_report(data)
+        msg = _safe_text(report)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _tradingview_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    ) -> None:
+        if not ticker:
+            await update.message.reply_text("Usage: /tradingview AAPL")
+            return
+        await update.message.reply_text(
+            f"Fetching TradingView analysis for {ticker}…"
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.tradingview import (
+                get_tradingview_analysis,
+                format_tradingview_section,
+            )
+            tv_analysis = await loop.run_in_executor(
+                None, lambda: get_tradingview_analysis(ticker)
+            )
+        except Exception as exc:
+            logger.error("TradingView analysis failed for %s: %s", ticker, exc)
+            from momentum_radar.premarket.tradingview import format_tradingview_section
+            tv_analysis = None
+
+        report = format_tradingview_section(ticker, tv_analysis)
+        msg = _safe_text(report)
+        await update.message.reply_text(msg)
+
     async def _run_scan(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
@@ -972,6 +1116,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("brief", _brief_handler))
     app.add_handler(CommandHandler("news", _news_handler))
     app.add_handler(CommandHandler("marketnews", _marketnews_handler))
+    app.add_handler(CommandHandler("fundamentals", _fundamentals_handler))
+    app.add_handler(CommandHandler("earnings", _earnings_handler))
+    app.add_handler(CommandHandler("tradingview", _tradingview_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
