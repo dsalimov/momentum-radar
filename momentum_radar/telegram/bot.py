@@ -813,9 +813,10 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             msg = _safe_text(format_squeeze_report(report))
             await update.message.reply_text(msg)
         else:
-            # Scan universe for top candidates
+            # Scan full universe for top candidates
             await update.message.reply_text(
-                f"Scanning {len(universe[:100])} stocks for short squeeze setups…"
+                f"Scanning {len(universe)} stocks for short squeeze setups "
+                f"(high SI, rising borrow fees, unusual volume)… This may take a moment."
             )
             try:
                 from momentum_radar.premarket.squeeze_detector import (
@@ -824,7 +825,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
                 )
                 candidates = await loop.run_in_executor(
                     None,
-                    lambda: scan_squeeze_candidates(universe[:100], fetcher, min_score=30, top_n=10),
+                    lambda: scan_squeeze_candidates(universe, fetcher, min_score=40, top_n=10),
                 )
             except Exception as exc:
                 logger.error("Squeeze scan failed: %s", exc)
@@ -839,10 +840,15 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             for i, c in enumerate(candidates, 1):
                 si_str = f"{c['short_interest_pct']:.1%}" if c.get("short_interest_pct") is not None else "N/A"
                 dtc_str = f"{c['days_to_cover']:.1f}" if c.get("days_to_cover") is not None else "N/A"
+                borrow_str = (
+                    f"~{c['borrow_fee_estimate']:.0%}"
+                    if c.get("borrow_fee_estimate") is not None
+                    else "N/A"
+                )
                 lines.append(
                     f"{i:2d}. {c['ticker']:6s}  Score {c['squeeze_score']}%  "
                     f"SI {si_str}  DTC {dtc_str}  Float {c.get('float_str', 'N/A')}  "
-                    f"RVOL {c.get('rvol', 'N/A')}x"
+                    f"RVOL {c.get('rvol', 'N/A')}x  Borrow {borrow_str}"
                 )
                 lines.append(f"    {c['squeeze_label']}")
             lines.append("")
