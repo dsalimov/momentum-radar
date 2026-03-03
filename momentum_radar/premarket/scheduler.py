@@ -1,11 +1,13 @@
 """
 scheduler.py – APScheduler-backed pre-market scan scheduler.
 
-Schedules three daily pre-market briefing runs (all times in US/Eastern):
+Schedules five daily pre-market briefing runs (all times in US/Eastern):
 
-* 4:05 AM  – Early pre-market scan
-* 6:30 AM  – Mid pre-market scan
-* 8:45 AM  – Final briefing before open
+* 7:00 AM  – Early pre-market scan
+* 8:00 AM  – Mid pre-market scan
+* 9:00 AM  – Pre-open scan
+* 9:20 AM  – Final pre-open briefing
+* 9:25 AM  – Premarket Summary Report (most actionable movers before bell)
 
 Usage::
 
@@ -39,9 +41,11 @@ def start_scheduler(
 
     Three cron jobs are registered (all in US/Eastern timezone):
 
-    * 4:05 AM  – Early pre-market
-    * 6:30 AM  – Mid pre-market
-    * 8:45 AM  – Final pre-open briefing
+    * 7:00 AM  – Early pre-market
+    * 8:00 AM  – Mid pre-market
+    * 9:00 AM  – Pre-open scan
+    * 9:20 AM  – Final pre-open briefing
+    * 9:25 AM  – Premarket Summary Report
 
     Args:
         tickers: Stock universe to include in the scan.
@@ -68,9 +72,11 @@ def start_scheduler(
     scheduler = BackgroundScheduler(timezone="America/New_York")
 
     sessions = [
-        ("04", "05", "Early Pre-Market 4:05 AM"),
-        ("06", "30", "Mid Pre-Market 6:30 AM"),
-        ("08", "45", "Final Pre-Open 8:45 AM"),
+        ("07", "00", "Pre-Market 7:00 AM"),
+        ("08", "00", "Pre-Market 8:00 AM"),
+        ("09", "00", "Pre-Open Scan 9:00 AM"),
+        ("09", "20", "Final Pre-Open 9:20 AM"),
+        ("09", "25", "Premarket Summary Report 9:25 AM"),
     ]
 
     for hour, minute, label in sessions:
