@@ -70,29 +70,6 @@ class SqueezeAlertRecord(Base):
     last_alerted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_score = Column(Integer, nullable=False, default=0)
 
-class AlertPreference(Base):
-    """Per-chat alert on/off preference."""
-
-    __tablename__ = "alert_preferences"
-
-    chat_id = Column(String(64), primary_key=True, nullable=False)
-    alerts_enabled = Column(Boolean, nullable=False, default=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
-
-class SqueezeAlertRecord(Base):
-    """Tracks the last time a squeeze alert was sent for a ticker.
-
-    Used to prevent alert spam: the same ticker is suppressed for 6 hours
-    unless its squeeze score increases by 10 or more.
-    """
-
-    __tablename__ = "squeeze_alert_records"
-
-    ticker = Column(String(16), primary_key=True, nullable=False)
-    last_alerted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    last_score = Column(Integer, nullable=False, default=0)
-
 
 def init_db(db_url: str = "sqlite:///momentum_radar.db") -> None:
     """Initialise the database engine and create tables.
@@ -286,8 +263,4 @@ def record_squeeze_alert(ticker: str, score: int) -> None:
             session.commit()
             logger.debug("Squeeze alert recorded for %s (score=%d)", ticker, score)
     except Exception as exc:
-    copilot/add-advanced-squeeze-feature
         logger.error("Failed to record squeeze alert for %s: %s", ticker, exc)
-=======
-        logger.error("Failed to record squeeze alert for %s: %s", ticker, exc)
-      main
