@@ -130,6 +130,11 @@ class SignalThresholds:
         default_factory=lambda: _float("SQUEEZE_EXPANSION_RATIO", 1.10)
     )
 
+    # Chop filter: if day range / ATR is below this ratio the market is ranging
+    chop_range_multiplier: float = field(
+        default_factory=lambda: _float("CHOP_RANGE_MULTIPLIER", 0.5)
+    )
+
 
 @dataclass
 class ScoreThresholds:
@@ -144,6 +149,14 @@ class ScoreThresholds:
     # Minimum confidence % for the advanced alert engine (0–100)
     min_confidence_pct: float = field(
         default_factory=lambda: _float("MIN_CONFIDENCE_PCT", 70.0)
+    )
+    # High-probability signal gate: weighted score must be >= this value (0-100+ scale)
+    signal_score_minimum: int = field(
+        default_factory=lambda: _int("SIGNAL_SCORE_MINIMUM", 75)
+    )
+    # Minimum number of independent modules that must fire before sending an alert
+    min_signal_confirmations: int = field(
+        default_factory=lambda: _int("MIN_SIGNAL_CONFIRMATIONS", 2)
     )
 
 
