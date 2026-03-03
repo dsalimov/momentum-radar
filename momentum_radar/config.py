@@ -103,6 +103,33 @@ class SignalThresholds:
         default_factory=lambda: _float("OPTIONS_VOLUME_RATIO", 3.0)
     )
 
+    # Supply & Demand Zones
+    sd_zone_min_score: float = field(
+        default_factory=lambda: _float("SD_ZONE_MIN_SCORE", 50.0)
+    )
+    sd_impulse_atr_mult: float = field(
+        default_factory=lambda: _float("SD_IMPULSE_ATR_MULT", 1.20)
+    )
+    sd_impulse_vol_mult: float = field(
+        default_factory=lambda: _float("SD_IMPULSE_VOL_MULT", 1.30)
+    )
+    sd_base_atr_mult: float = field(
+        default_factory=lambda: _float("SD_BASE_ATR_MULT", 0.80)
+    )
+
+    # Support/resistance touch tolerance (fraction of price)
+    sr_touch_tolerance: float = field(
+        default_factory=lambda: _float("SR_TOUCH_TOLERANCE", 0.02)
+    )
+
+    # Volatility squeeze thresholds
+    squeeze_bb_threshold: float = field(
+        default_factory=lambda: _float("SQUEEZE_BB_THRESHOLD", 0.04)
+    )
+    squeeze_expansion_ratio: float = field(
+        default_factory=lambda: _float("SQUEEZE_EXPANSION_RATIO", 1.10)
+    )
+
 
 @dataclass
 class ScoreThresholds:
@@ -114,6 +141,10 @@ class ScoreThresholds:
         default_factory=lambda: _int("SCORE_STRONG_MOMENTUM", 8)
     )
     alert_minimum: int = field(default_factory=lambda: _int("SCORE_ALERT_MINIMUM", 5))
+    # Minimum confidence % for the advanced alert engine (0–100)
+    min_confidence_pct: float = field(
+        default_factory=lambda: _float("MIN_CONFIDENCE_PCT", 70.0)
+    )
 
 
 @dataclass
