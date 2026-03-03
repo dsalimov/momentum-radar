@@ -94,6 +94,10 @@ _HELP_TEXT = (
     "News Commands:\n"
     "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
     "  /marketnews - Full market-wide news search with AI summary\n\n"
+        "Automated Alerts:\n"
+    "  /alerts on     - Enable hourly squeeze + signal alerts\n"
+    "  /alerts off    - Disable automated alerts\n"
+    "  /alerts status - Show your current alert preference\n\n"
     "Use /status to check bot health."
 )
 
@@ -267,6 +271,52 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _tradingview_handler_impl(update, context, ticker)
+    async def _alerts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _alerts_handler_impl(update, context)
+
+    async def _alerts_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle /alerts on|off|status command."""
+        from momentum_radar.storage.database import (
+            get_alert_preference,
+            set_alert_preference,
+        )
+
+        chat_id = str(update.effective_chat.id)
+        arg = (" ".join(context.args) if context.args else "").strip().lower()
+
+        if arg == "on":
+            set_alert_preference(chat_id, True)
+            await update.message.reply_text(
+                "✅ Automated squeeze alerts ENABLED.\n"
+                "You will receive up to 5 alerts per hour when high-probability "
+                "setups are detected."
+            )
+        elif arg == "off":
+            set_alert_preference(chat_id, False)
+            await update.message.reply_text(
+                "🔕 Automated squeeze alerts DISABLED.\n"
+                "You can re-enable them with /alerts on"
+            )
+        elif arg == "status":
+            enabled = get_alert_preference(chat_id)
+            status_str = "ENABLED ✅" if enabled else "DISABLED 🔕"
+            await update.message.reply_text(
+                f"Automated alerts: {status_str}\n\n"
+                "Commands:\n"
+                "  /alerts on    – enable automated alerts\n"
+                "  /alerts off   – disable automated alerts\n"
+                "  /alerts status – show current setting"
+            )
+        else:
+            await update.message.reply_text(
+                "Usage:\n"
+                "  /alerts on     – enable automated hourly squeeze alerts\n"
+                "  /alerts off    – disable automated alerts\n"
+                "  /alerts status – show current alert preference"
+            )
+
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -1125,6 +1175,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("fundamentals", _fundamentals_handler))
     app.add_handler(CommandHandler("earnings", _earnings_handler))
     app.add_handler(CommandHandler("tradingview", _tradingview_handler))
+    app.add_handler(CommandHandler("alerts", _alerts_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
