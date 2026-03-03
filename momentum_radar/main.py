@@ -130,7 +130,6 @@ def _update_opening_range(ticker: str, bars) -> None:
     if bars is None or bars.empty:
         return
 
-    import pandas as pd
     try:
         first_15 = bars.between_time("09:30", "09:44")
         if first_15.empty:

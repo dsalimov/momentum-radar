@@ -34,6 +34,7 @@ Signal priority
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -381,7 +382,6 @@ def _check_momentum(
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
     histogram = float((macd_line - signal_line).iloc[-1])
 
-    import math
     if math.isnan(rsi):
         return None
 
@@ -589,7 +589,6 @@ def _is_fake_breakout(
         if len(rsi_series) >= 2:
             rsi_now = float(rsi_series.iloc[-1])
             rsi_prev = float(rsi_series.iloc[-2])
-            import math
             if not math.isnan(rsi_now) and not math.isnan(rsi_prev):
                 price_up = last_close > float(closes.iloc[-2])
                 rsi_up = rsi_now > rsi_prev
