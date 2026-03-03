@@ -85,19 +85,32 @@ _HELP_TEXT = (
     "Pre-Market Intelligence:\n"
     "  /premarket - Run pre-market scan (unusual vol + most active volume leaders + options spikes)\n"
     "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
-    "  /brief - Generate daily market intelligence brief\n\n"
+    "  /brief - Generate daily market intelligence brief\n"
+    "  /morningbrief - Comprehensive morning briefing (futures, earnings, sector, key levels)\n\n"
     "Fundamentals & Earnings:\n"
     "  /fundamentals AAPL - Income statement, cash flow, assets & liabilities\n"
     "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
-    "TradingView:\n"
-    "  /tradingview AAPL - TradingView chart links + technical consensus signals\n\n"
-    "News Commands:\n"
+    "News & Sentiment:\n"
     "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
+     copilot/add-advanced-squeeze-feature
     "  /marketnews - Full market-wide news search with AI summary\n\n"
+=======
+    "  /news market - Market-wide news with AI sentiment summary\n"
+    "  /news premarket - Pre-market focused news scan\n"
+    "  /marketnews - Full market-wide news search with AI summary\n"
+    "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
+    "Market Calendar:\n"
+    "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
+      main
     "Automated Alerts:\n"
     "  /alerts on     - Enable hourly squeeze + signal alerts\n"
     "  /alerts off    - Disable automated alerts\n"
     "  /alerts status - Show your current alert preference\n\n"
+     copilot/add-advanced-squeeze-feature
+=======
+    "Market Heatmap:\n"
+    "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
+      main
     "Use /status to check bot health."
 )
 
@@ -196,20 +209,27 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             await _squeeze_handler_impl(update, context, ticker)
         elif text_lower == "brief":
             await _brief_handler_impl(update, context)
+        elif text_lower == "morningbrief":
+            await _morningbrief_handler_impl(update, context)
         elif text_lower.startswith("news "):
-            ticker = text[len("news "):].strip().upper()
-            await _news_handler_impl(update, context, ticker)
+            arg = text[len("news "):].strip()
+            await _news_handler_impl(update, context, arg)
+        elif text_lower == "news":
+            await _news_handler_impl(update, context, "")
+        elif text_lower == "heatmap":
+            await _heatmap_handler_impl(update, context)
         elif text_lower == "marketnews":
             await _marketnews_handler_impl(update, context)
+        elif text_lower == "sentiment":
+            await _sentiment_handler_impl(update, context)
+        elif text_lower == "dates":
+            await _dates_handler_impl(update, context)
         elif text_lower.startswith("fundamentals "):
             ticker = text[len("fundamentals "):].strip().upper()
             await _fundamentals_handler_impl(update, context, ticker)
         elif text_lower.startswith("earnings "):
             ticker = text[len("earnings "):].strip().upper()
             await _earnings_handler_impl(update, context, ticker)
-        elif text_lower.startswith("tradingview "):
-            ticker = text[len("tradingview "):].strip().upper()
-            await _tradingview_handler_impl(update, context, ticker)
         else:
             await _run_scan(update, context, text)
 
@@ -253,12 +273,21 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _brief_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _brief_handler_impl(update, context)
 
+    async def _morningbrief_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _morningbrief_handler_impl(update, context)
+
     async def _news_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        ticker = " ".join(context.args).strip().upper() if context.args else ""
-        await _news_handler_impl(update, context, ticker)
+        arg = " ".join(context.args).strip() if context.args else ""
+        await _news_handler_impl(update, context, arg)
 
     async def _marketnews_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _marketnews_handler_impl(update, context)
+
+    async def _sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _sentiment_handler_impl(update, context)
+
+    async def _dates_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _dates_handler_impl(update, context)
 
     async def _fundamentals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
@@ -268,9 +297,15 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _earnings_handler_impl(update, context, ticker)
 
+    copilot/add-advanced-squeeze-feature
     async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _tradingview_handler_impl(update, context, ticker)
+=======
+    async def _heatmap_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _heatmap_handler_impl(update, context)
+
+        main
     async def _alerts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _alerts_handler_impl(update, context)
 
@@ -316,7 +351,10 @@ async def start_telegram_bot() -> None:  # pragma: no cover
                 "  /alerts off    – disable automated alerts\n"
                 "  /alerts status – show current alert preference"
             )
+ copilot/add-advanced-squeeze-feature
 
+=======
+     main
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -704,20 +742,6 @@ async def start_telegram_bot() -> None:  # pragma: no cover
 
         text_report = format_full_analysis(analysis)
 
-        # Append TradingView section
-        try:
-            from momentum_radar.premarket.tradingview import (
-                get_tradingview_analysis,
-                format_tradingview_section,
-            )
-            tv_analysis = await loop.run_in_executor(
-                None, lambda: get_tradingview_analysis(ticker)
-            )
-            tv_section = format_tradingview_section(ticker, tv_analysis)
-            text_report = text_report + "\n\n" + tv_section
-        except Exception as exc:
-            logger.debug("TradingView section skipped for %s: %s", ticker, exc)
-
         msg = _safe_text(text_report)
         # Telegram message limit is 4096 characters – split if needed
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
@@ -930,8 +954,62 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             await update.message.reply_text(chunk)
 
     async def _news_handler_impl(
-        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+        update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str
     ) -> None:
+        """Handle /news [TICKER | market | premarket].
+
+        - /news AAPL      → ticker-specific news with sentiment
+        - /news market    → broad market-wide news
+        - /news premarket → premarket-focused news (top movers, catalysts)
+        - /news           → usage hint
+        """
+        arg_lower = arg.lower().strip()
+
+        # No argument – show usage hint
+        if not arg_lower:
+            await update.message.reply_text(
+                "Usage:\n"
+                "  /news AAPL       – ticker news\n"
+                "  /news market     – market-wide news\n"
+                "  /news premarket  – pre-market news & catalysts"
+            )
+            return
+
+        # Route to market-wide news
+        if arg_lower == "market":
+            await _marketnews_handler_impl(update, context)
+            return
+
+        if arg_lower == "premarket":
+            await update.message.reply_text(
+                "Fetching pre-market news & catalysts… This may take a moment."
+            )
+            loop = asyncio.get_event_loop()
+            try:
+                from momentum_radar.news.news_fetcher import (
+                    fetch_market_news,
+                    summarize_news,
+                    format_news_report,
+                )
+                articles = await loop.run_in_executor(None, fetch_market_news)
+            except Exception as exc:
+                logger.error("Premarket news fetch failed: %s", exc)
+                await update.message.reply_text("Could not fetch pre-market news. Please try again.")
+                return
+
+            if not articles:
+                await update.message.reply_text("No pre-market news available at this time.")
+                return
+
+            summary = summarize_news(articles)
+            report = format_news_report(articles, summary, title="Pre-Market News & Catalysts")
+            msg = _safe_text(report)
+            for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+                await update.message.reply_text(chunk)
+            return
+
+        # Ticker-specific news
+        ticker = arg.upper().strip()
         if not ticker:
             await update.message.reply_text("Usage: /news AAPL")
             return
@@ -1058,32 +1136,150 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
             await update.message.reply_text(chunk)
 
-    async def _tradingview_handler_impl(
-        update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
+    async def _morningbrief_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        if not ticker:
-            await update.message.reply_text("Usage: /tradingview AAPL")
-            return
+        """Generate and send a comprehensive morning briefing."""
         await update.message.reply_text(
-            f"Fetching TradingView analysis for {ticker}…"
+            "📰 Generating comprehensive morning brief… This may take a moment."
         )
         loop = asyncio.get_event_loop()
         try:
-            from momentum_radar.premarket.tradingview import (
-                get_tradingview_analysis,
-                format_tradingview_section,
+            from momentum_radar.premarket.briefing import generate_market_brief
+            from momentum_radar.news.news_fetcher import (
+                fetch_market_news,
+                summarize_news,
             )
-            tv_analysis = await loop.run_in_executor(
-                None, lambda: get_tradingview_analysis(ticker)
+            from momentum_radar.utils.economic_calendar import (
+                get_weekly_calendar,
+                format_calendar_report,
             )
-        except Exception as exc:
-            logger.error("TradingView analysis failed for %s: %s", ticker, exc)
-            from momentum_radar.premarket.tradingview import format_tradingview_section
-            tv_analysis = None
 
-        report = format_tradingview_section(ticker, tv_analysis)
+            brief = await loop.run_in_executor(
+                None,
+                lambda: generate_market_brief(universe, fetcher, session_label="Morning Brief"),
+            )
+
+            # Append news sentiment summary
+            try:
+                articles = await loop.run_in_executor(None, fetch_market_news)
+                news_summary = summarize_news(articles)
+                overall = news_summary.get("overall_sentiment", "NEUTRAL")
+                bd = news_summary.get("sentiment_breakdown", {})
+                themes = news_summary.get("key_themes", [])
+                news_section = (
+                    "\n\nNEWS SENTIMENT\n" + "-" * 30 + "\n"
+                    f"Overall: {overall}\n"
+                    f"Bullish: {bd.get('BULLISH', 0)}  Neutral: {bd.get('NEUTRAL', 0)}"
+                    f"  Bearish: {bd.get('BEARISH', 0)}\n"
+                )
+                if themes:
+                    news_section += f"Key Themes: {', '.join(themes)}\n"
+                brief += news_section
+            except Exception as exc:
+                logger.debug("Morning brief news section failed: %s", exc)
+
+            # Append today's economic events
+            try:
+                cal_events = await loop.run_in_executor(None, lambda: get_weekly_calendar(0))
+                from datetime import date as _date
+                today_events = [e for e in cal_events if e.get("date") == _date.today()]
+                if today_events:
+                    cal_section = "\n\nTODAY'S KEY EVENTS\n" + "-" * 30 + "\n"
+                    for ev in today_events:
+                        impact = ev.get("impact", "")
+                        cal_section += f"  [{impact}] {ev.get('time', 'TBD')}  {ev.get('name', '')}\n"
+                    brief += cal_section
+            except Exception as exc:
+                logger.debug("Morning brief calendar section failed: %s", exc)
+
+        except Exception as exc:
+            logger.error("Morning brief failed: %s", exc)
+            await update.message.reply_text("Could not generate morning brief. Please try again.")
+            return
+
+        msg = _safe_text(brief)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _sentiment_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Generate and send the market sentiment engine report."""
+        await update.message.reply_text(
+            "🧠 Computing market sentiment… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.services.sentiment_engine import (
+                get_market_sentiment,
+                format_sentiment_report,
+            )
+            result = await loop.run_in_executor(
+                None, lambda: get_market_sentiment(fetcher)
+            )
+            report = format_sentiment_report(result)
+        except Exception as exc:
+            logger.error("Sentiment engine failed: %s", exc)
+            await update.message.reply_text("Could not compute market sentiment. Please try again.")
+            return
+
         msg = _safe_text(report)
-        await update.message.reply_text(msg)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _dates_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Send the weekly economic calendar."""
+        await update.message.reply_text("📅 Building economic calendar for this week…")
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.utils.economic_calendar import (
+                get_weekly_calendar,
+                format_calendar_report,
+            )
+            events = await loop.run_in_executor(None, lambda: get_weekly_calendar(0))
+            report = format_calendar_report(events, week_offset=0)
+        except Exception as exc:
+            logger.error("Economic calendar failed: %s", exc)
+            await update.message.reply_text("Could not build economic calendar. Please try again.")
+            return
+
+        msg = _safe_text(report)
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
+    async def _heatmap_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Generate and send a market sector heatmap."""
+        await update.message.reply_text("📊 Generating market sector heatmap… please wait.")
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.utils.heatmap import generate_market_heatmap
+            chart_path, text_summary = await loop.run_in_executor(None, generate_market_heatmap)
+            if chart_path:
+                try:
+                    with open(chart_path, "rb") as photo:
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo,
+                            caption=text_summary[:1024],
+                        )
+                except Exception:
+                    await update.message.reply_text(text_summary)
+                finally:
+                    try:
+                        import os
+                        os.remove(chart_path)
+                    except OSError:
+                        pass
+            else:
+                await update.message.reply_text(text_summary)
+        except Exception as exc:
+            logger.error("Heatmap generation error: %s", exc)
+            await update.message.reply_text(f"⚠️ Failed to generate heatmap: {exc}")
 
     async def _run_scan(
         update: Update,
@@ -1170,12 +1366,20 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("premarket", _premarket_handler))
     app.add_handler(CommandHandler("squeeze", _squeeze_handler))
     app.add_handler(CommandHandler("brief", _brief_handler))
+    app.add_handler(CommandHandler("morningbrief", _morningbrief_handler))
     app.add_handler(CommandHandler("news", _news_handler))
     app.add_handler(CommandHandler("marketnews", _marketnews_handler))
+    app.add_handler(CommandHandler("sentiment", _sentiment_handler))
+    app.add_handler(CommandHandler("dates", _dates_handler))
     app.add_handler(CommandHandler("fundamentals", _fundamentals_handler))
     app.add_handler(CommandHandler("earnings", _earnings_handler))
+   copilot/add-advanced-squeeze-feature
     app.add_handler(CommandHandler("tradingview", _tradingview_handler))
     app.add_handler(CommandHandler("alerts", _alerts_handler))
+=======
+    app.add_handler(CommandHandler("alerts", _alerts_handler))
+    app.add_handler(CommandHandler("heatmap", _heatmap_handler))
+        main
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
