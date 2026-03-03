@@ -156,7 +156,7 @@ class ScoreThresholds:
     )
     # Minimum number of independent modules that must fire before sending an alert
     min_signal_confirmations: int = field(
-        default_factory=lambda: _int("MIN_SIGNAL_CONFIRMATIONS", 2)
+        default_factory=lambda: _int("MIN_SIGNAL_CONFIRMATIONS", 3)
     )
 
 

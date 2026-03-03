@@ -9,6 +9,8 @@ Starts the asynchronous scanning loop that:
 5. Sends Telegram + console alerts for qualifying scores
 6. Persists all alerts to SQLite and CSV
 7. Respects market hours, lunch-lull suppression, and per-ticker cooldowns
+8. Automatically switches timeframe based on time of day
+9. Sends first-15-minute opening-range breakout alerts for key assets
 
 Usage::
 
@@ -32,7 +34,7 @@ import signal
 import sys
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from momentum_radar.config import config
 from momentum_radar.data.data_fetcher import get_data_fetcher
@@ -76,8 +78,144 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Graceful shutdown
+# Timeframe selection based on time of day
 # ---------------------------------------------------------------------------
+
+#: Priority assets monitored for the first-15-minute opening range breakout.
+_OPENING_RANGE_ASSETS: List[str] = [
+    "SPY", "QQQ",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "LLY", "AVGO",
+]
+
+#: Stores (high, low) of the first 15 minutes keyed by ticker.
+_opening_range_cache: Dict[str, Tuple[float, float]] = {}
+#: Tracks whether an opening-range alert has already been sent for each ticker today.
+_opening_range_alerted: Dict[str, str] = {}
+
+
+def get_active_timeframe(current_time: datetime) -> str:
+    """Return the active candle timeframe based on time of day.
+
+    - 09:30–09:59 → ``"2m"`` (scalp mode)
+    - 10:00–10:59 → ``"5m"`` (intraday momentum)
+    - 11:00–close → ``"10m"`` (trend continuation)
+
+    Args:
+        current_time: Current local time.
+
+    Returns:
+        Timeframe string suitable for a data-fetcher ``interval`` parameter.
+    """
+    t = current_time.strftime("%H:%M")
+    if "09:30" <= t < "10:00":
+        return "2m"
+    if "10:00" <= t < "11:00":
+        return "5m"
+    return "10m"
+
+
+def _update_opening_range(ticker: str, bars) -> None:
+    """Populate the opening-range cache from the first 15-minute bars.
+
+    Uses the first 15 one-minute bars (09:30–09:44) to derive the opening
+    high and low.  Does nothing if the cache already contains an entry for
+    *ticker* today.
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday OHLCV DataFrame (1-min, DatetimeIndex).
+    """
+    if ticker in _opening_range_cache:
+        return
+    if bars is None or bars.empty:
+        return
+
+    import pandas as pd
+    try:
+        first_15 = bars.between_time("09:30", "09:44")
+        if first_15.empty:
+            return
+        or_high = float(first_15["high"].max())
+        or_low = float(first_15["low"].min())
+        _opening_range_cache[ticker] = (or_high, or_low)
+        logger.debug(
+            "Opening range cached %s: high=%.2f low=%.2f", ticker, or_high, or_low
+        )
+    except Exception as exc:
+        logger.debug("Opening range calculation failed for %s: %s", ticker, exc)
+
+
+def _check_opening_range_breakout(
+    ticker: str,
+    bars,
+    fetcher,
+    market_condition: str,
+    now: datetime,
+) -> None:
+    """Send an alert if price breaks the opening range with volume confirmation.
+
+    An alert is only sent once per direction per session.  Volume on the
+    break candle must be above average.
+
+    Args:
+        ticker:           Stock symbol (must be in :data:`_OPENING_RANGE_ASSETS`).
+        bars:             Intraday 1-min OHLCV DataFrame.
+        fetcher:          Data fetcher (used to fetch a fresh quote).
+        market_condition: Current market condition string.
+        now:              Current datetime.
+    """
+    if ticker not in _OPENING_RANGE_ASSETS:
+        return
+    if bars is None or bars.empty:
+        return
+
+    t = now.strftime("%H:%M")
+    # Only check after the opening range is fully formed
+    if t < "09:45":
+        return
+
+    _update_opening_range(ticker, bars)
+    if ticker not in _opening_range_cache:
+        return
+
+    or_high, or_low = _opening_range_cache[ticker]
+    last_close = float(bars["close"].iloc[-1])
+    last_vol = float(bars["volume"].iloc[-1])
+    avg_vol = float(bars["volume"].iloc[-21:-1].mean()) if len(bars) > 1 else 0.0
+
+    # Require volume expansion on the breakout candle
+    has_volume = avg_vol > 0 and last_vol >= avg_vol * 1.5
+
+    direction: Optional[str] = None
+    if last_close > or_high and has_volume:
+        direction = "BUY"
+    elif last_close < or_low and has_volume:
+        direction = "SELL"
+
+    if direction is None:
+        return
+
+    # One alert per direction per session
+    prev_direction = _opening_range_alerted.get(ticker, "")
+    if prev_direction == direction:
+        return
+
+    _opening_range_alerted[ticker] = direction
+
+    message = (
+        f"📈 OPENING RANGE BREAKOUT – {ticker}\n"
+        f"\n"
+        f"Direction:  {direction}\n"
+        f"OR High:    {or_high:.2f}  |  OR Low:  {or_low:.2f}\n"
+        f"Last Close: {last_close:.2f}\n"
+        f"Volume:     {last_vol / avg_vol:.1f}x average\n"
+        f"Market:     {market_condition}\n"
+        f"Time:       {now.strftime('%I:%M %p EST')}\n"
+    )
+    logger.info("\n%s", message)
+    send_telegram_alert(message)
+
+
 
 _SHUTDOWN = False
 
@@ -165,13 +303,24 @@ def _scan_ticker(
     fetcher,
     market_penalty: int,
     market_condition: str,
+    now: Optional[datetime] = None,
 ) -> None:
     """Fetch data for *ticker* and evaluate all signal modules."""
+    if now is None:
+        now = datetime.now()
+
     try:
-        bars = fetcher.get_intraday_bars(ticker, interval="1m", period="1d")
+        # Use the timeframe appropriate for the current session window
+        active_tf = get_active_timeframe(now)
+        bars = fetcher.get_intraday_bars(ticker, interval=active_tf, period="1d")
+        # Always fetch 1-min bars separately for opening-range logic
+        bars_1m = fetcher.get_intraday_bars(ticker, interval="1m", period="1d")
         daily = fetcher.get_daily_bars(ticker, period="60d")
         fundamentals = fetcher.get_fundamentals(ticker)
         options = fetcher.get_options_volume(ticker)
+
+        # --- Opening range breakout check (key assets only) ---
+        _check_opening_range_breakout(ticker, bars_1m, fetcher, market_condition, now)
 
         result = compute_score(
             ticker=ticker,
@@ -336,6 +485,7 @@ async def run_scanner() -> None:
     hourly_scheduler = start_hourly_scheduler(universe, fetcher, send_telegram_alert)
 
     try:
+        _last_trading_date: Optional[str] = None
         while not _SHUTDOWN:
             now = datetime.now()
 
@@ -344,6 +494,14 @@ async def run_scanner() -> None:
                 await asyncio.sleep(60)
                 continue
 
+            # Reset opening-range cache at the start of each new trading day
+            today_str = now.strftime("%Y-%m-%d")
+            if today_str != _last_trading_date:
+                _opening_range_cache.clear()
+                _opening_range_alerted.clear()
+                _last_trading_date = today_str
+                logger.info("Opening-range cache reset for new trading day %s.", today_str)
+
             lull = is_lunch_lull(now)
             if lull:
                 logger.info("Lunch-lull window – scan frequency reduced.")
@@ -351,8 +509,9 @@ async def run_scanner() -> None:
             _, _, market_penalty, market_condition = _get_market_context(fetcher)
 
             logger.info(
-                "Scan cycle starting at %s | market=%s | penalty=%d",
+                "Scan cycle starting at %s | tf=%s | market=%s | penalty=%d",
                 now.strftime("%H:%M:%S"),
+                get_active_timeframe(now),
                 market_condition,
                 market_penalty,
             )
@@ -360,7 +519,7 @@ async def run_scanner() -> None:
             for ticker in universe:
                 if _SHUTDOWN:
                     break
-                _scan_ticker(ticker, fetcher, market_penalty, market_condition)
+                _scan_ticker(ticker, fetcher, market_penalty, market_condition, now)
                 await asyncio.sleep(0)  # yield control to the event loop
 
             interval = config.scan.interval_seconds
