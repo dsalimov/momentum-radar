@@ -46,6 +46,9 @@ import momentum_radar.signals.short_interest  # noqa: F401
 import momentum_radar.signals.options_flow  # noqa: F401
 import momentum_radar.signals.trend  # noqa: F401
 import momentum_radar.signals.vwap_signal  # noqa: F401
+import momentum_radar.signals.support_resistance  # noqa: F401
+import momentum_radar.signals.squeeze  # noqa: F401
+import momentum_radar.signals.supply_demand  # noqa: F401
 
 from momentum_radar.signals.scoring import compute_score, AlertLevel
 from momentum_radar.alerts.formatter import format_alert

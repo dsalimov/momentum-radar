@@ -54,7 +54,9 @@ class SignalResult:
     ticker: str
     confirmations: List[Confirmation] = field(default_factory=list)
     priority: str = "NO_SIGNAL"      # "NO_SIGNAL" | "ALERT" | "HIGH_CONFIDENCE"
-    confidence_score: float = 0.0    # average confirmation confidence (0–100)
+    confidence_score: float = 0.0    # probability % (0–100)
+    risk_grade: str = "High"         # "Low" | "Medium" | "High"
+    setup_strength: str = "C"        # "A+" | "A" | "B" | "C"
 
     @property
     def confirmation_count(self) -> int:
@@ -293,6 +295,136 @@ def _check_options(options: Optional[Dict]) -> Optional[Confirmation]:
 
 
 # ---------------------------------------------------------------------------
+# Supply & demand zone confirmation
+# ---------------------------------------------------------------------------
+
+def _check_supply_demand(
+    ticker: str,
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+) -> Optional[Confirmation]:
+    """Return a Confirmation if price is near a scored S&D zone.
+
+    Uses :func:`~momentum_radar.signals.supply_demand.detect_zones` and
+    :func:`~momentum_radar.signals.supply_demand.get_active_zone`.
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday 1-min OHLCV DataFrame.
+        daily:  Daily OHLCV DataFrame.
+
+    Returns:
+        :class:`Confirmation` or ``None``.
+    """
+    try:
+        from momentum_radar.signals.supply_demand import detect_zones, get_active_zone
+        from momentum_radar.utils.indicators import compute_atr
+
+        if daily is None or daily.empty:
+            return None
+
+        atr = compute_atr(daily)
+        if atr is None or atr <= 0:
+            return None
+
+        if bars is not None and not bars.empty and "close" in bars.columns:
+            current_price = float(bars["close"].iloc[-1])
+        else:
+            current_price = float(daily["close"].iloc[-1])
+
+        zones = detect_zones(ticker, daily, bars, min_score=50.0)
+        active_zone = get_active_zone(ticker, current_price, zones, atr)
+
+        if active_zone is None:
+            return None
+
+        conf = min(100.0, 65.0 + active_zone.strength_score * 0.25)
+        direction = "Demand" if active_zone.zone_type == "demand" else "Supply"
+        touch_label = "fresh" if active_zone.touch_count == 0 else f"tested {active_zone.touch_count}×"
+        return Confirmation(
+            name=f"{active_zone.strength_label} {direction} Zone",
+            category="supply_demand",
+            detail=(
+                f"[${active_zone.zone_low:.2f}–${active_zone.zone_high:.2f}] "
+                f"{active_zone.timeframe}, {touch_label}, "
+                f"strength {active_zone.strength_score:.0f}/100"
+            ),
+            confidence=round(conf, 1),
+        )
+    except Exception as exc:
+        logger.debug("S&D zone check failed for %s: %s", ticker, exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Probability scoring helpers
+# ---------------------------------------------------------------------------
+
+def _compute_probability(confirmations: List[Confirmation]) -> float:
+    """Compute an overall probability score (0–100) from confirmations.
+
+    The score is a weighted average of confirmation confidences with a
+    diversity bonus for multiple independent categories.
+
+    Args:
+        confirmations: List of :class:`Confirmation` objects.
+
+    Returns:
+        Probability score (0–100).
+    """
+    n = len(confirmations)
+    if n == 0:
+        return 0.0
+
+    avg_conf = sum(c.confidence for c in confirmations) / n
+
+    # Diversity bonus: each unique category adds 2 pts (max +8)
+    categories = {c.category for c in confirmations}
+    diversity_bonus = min(len(categories) * 2.0, 8.0)
+
+    # Quantity bonus: 3+ confirmations add 5 pts
+    quantity_bonus = 5.0 if n >= 3 else 0.0
+
+    total = avg_conf + diversity_bonus + quantity_bonus
+    return round(min(total, 100.0), 1)
+
+
+def _risk_grade_from_confidence(confidence_pct: float) -> str:
+    """Map confidence to a risk grade label.
+
+    Args:
+        confidence_pct: Confidence score (0–100).
+
+    Returns:
+        ``"Low"`` / ``"Medium"`` / ``"High"``.
+    """
+    if confidence_pct >= 80:
+        return "Low"
+    if confidence_pct >= 65:
+        return "Medium"
+    return "High"
+
+
+def _setup_strength_grade(n_confirmations: int, confidence_pct: float) -> str:
+    """Map confirmation count + confidence to a setup-strength grade.
+
+    Args:
+        n_confirmations: Number of confirmations.
+        confidence_pct:  Computed probability score.
+
+    Returns:
+        ``"A+"`` / ``"A"`` / ``"B"`` / ``"C"``.
+    """
+    if n_confirmations >= 3 and confidence_pct >= 80:
+        return "A+"
+    if n_confirmations >= 3 or confidence_pct >= 75:
+        return "A"
+    if n_confirmations >= 2 or confidence_pct >= 65:
+        return "B"
+    return "C"
+
+
+# ---------------------------------------------------------------------------
 # Main engine entry point
 # ---------------------------------------------------------------------------
 
@@ -307,11 +439,23 @@ def evaluate(
 
     A signal is actionable only when at least **2 confirmations** align.
 
+    Confirmations checked:
+    1. Volume   – RVOL or daily volume spike
+    2. Pattern  – 20-day breakout / double bottom / support bounce
+    3. Candlestick – engulfing / hammer / shooting star
+    4. Options  – call/put flow spike or gamma flip
+    5. S&D Zone – price near an institutional supply/demand zone
+
+    Probability scoring added to result:
+    - ``confidence_score``: weighted probability % (0–100)
+    - ``risk_grade``: ``"Low"`` / ``"Medium"`` / ``"High"``
+    - ``setup_strength``: ``"A+"`` / ``"A"`` / ``"B"`` / ``"C"``
+
     Args:
         ticker:        Stock symbol.
         bars:          Intraday 1-min OHLCV DataFrame.
         daily:         Daily OHLCV DataFrame (30+ days).
-        fundamentals:  Fundamental data dict (unused here, reserved for future).
+        fundamentals:  Fundamental data dict (reserved for future use).
         options:       Options activity dict.
 
     Returns:
@@ -320,10 +464,11 @@ def evaluate(
     confirmations: List[Confirmation] = []
 
     checkers = [
-        ("volume",      lambda: _check_volume(bars, daily)),
-        ("pattern",     lambda: _check_pattern(daily)),
-        ("candlestick", lambda: _check_candlestick(bars, daily)),
-        ("options",     lambda: _check_options(options)),
+        ("volume",       lambda: _check_volume(bars, daily)),
+        ("pattern",      lambda: _check_pattern(daily)),
+        ("candlestick",  lambda: _check_candlestick(bars, daily)),
+        ("options",      lambda: _check_options(options)),
+        ("supply_demand", lambda: _check_supply_demand(ticker, bars, daily)),
     ]
 
     for category, checker in checkers:
@@ -342,24 +487,27 @@ def evaluate(
     else:
         priority = "NO_SIGNAL"
 
-    avg_conf = (
-        round(sum(c.confidence for c in confirmations) / n, 1) if n > 0 else 0.0
-    )
+    confidence_pct = _compute_probability(confirmations)
+    risk_grade = _risk_grade_from_confidence(confidence_pct)
+    setup_strength = _setup_strength_grade(n, confidence_pct)
 
     result = SignalResult(
         ticker=ticker,
         confirmations=confirmations,
         priority=priority,
-        confidence_score=avg_conf,
+        confidence_score=confidence_pct,
+        risk_grade=risk_grade,
+        setup_strength=setup_strength,
     )
 
     if priority != "NO_SIGNAL":
         logger.info(
-            "Signal engine: %s → %s (%d confirmations, avg conf %.0f%%)",
+            "Signal engine: %s → %s (%d confirmations, conf %.0f%%, grade %s)",
             ticker,
             priority,
             n,
-            avg_conf,
+            confidence_pct,
+            setup_strength,
         )
 
     return result

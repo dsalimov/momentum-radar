@@ -1,8 +1,24 @@
 """
 formatter.py – Alert message formatting for console and Telegram.
 
-The :func:`format_alert` function converts a scan result dict into a
-human-readable string that matches the spec in the problem statement.
+Two formatters are provided:
+
+- :func:`format_alert`          – original score-based alert (backward-compatible)
+- :func:`format_advanced_alert` – structured institutional-grade alert with
+  entry / stop / target / R:R / confidence % / win rate / market regime,
+  matching the spec::
+
+      TICKER: XYZ
+      SETUP: Resistance Breakout
+      CONFIDENCE: 82%
+      RISK: Medium
+      ENTRY: 12.45
+      STOP: 11.90
+      TARGET: 14.20
+      R:R: 2.3
+      VOLUME: 2.4x Avg
+      OPTIONS FLOW: Bullish
+      MARKET REGIME: Risk-On
 """
 
 import logging
@@ -100,3 +116,191 @@ def format_alert(
     lines.append(f"Time: {ts.strftime('%I:%M %p EST')}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Risk-grade and setup-strength helpers
+# ---------------------------------------------------------------------------
+
+def _risk_grade(confidence_pct: float) -> str:
+    """Map confidence % to a risk grade label.
+
+    Args:
+        confidence_pct: Confidence score (0–100).
+
+    Returns:
+        ``"Low"`` / ``"Medium"`` / ``"High"`` risk label.
+    """
+    if confidence_pct >= 80:
+        return "Low"
+    if confidence_pct >= 65:
+        return "Medium"
+    return "High"
+
+
+def _setup_strength(confirmation_count: int, confidence_pct: float) -> str:
+    """Map confirmation count and confidence to a setup-strength grade.
+
+    Args:
+        confirmation_count: Number of independent confirmations.
+        confidence_pct:     Average confidence (0–100).
+
+    Returns:
+        One of ``"A+"`` / ``"A"`` / ``"B"`` / ``"C"``.
+    """
+    if confirmation_count >= 3 and confidence_pct >= 80:
+        return "A+"
+    if confirmation_count >= 3 or confidence_pct >= 75:
+        return "A"
+    if confirmation_count >= 2 or confidence_pct >= 65:
+        return "B"
+    return "C"
+
+
+def _options_flow_label(options: Optional[Dict]) -> str:
+    """Derive a one-word options flow sentiment from raw options data.
+
+    Args:
+        options: Options dict with ``call_volume``, ``put_volume``, etc.
+
+    Returns:
+        ``"Bullish"`` / ``"Bearish"`` / ``"Neutral"`` / ``"N/A"``.
+    """
+    if options is None:
+        return "N/A"
+    call_vol = int(options.get("call_volume", 0) or 0)
+    put_vol = int(options.get("put_volume", 0) or 0)
+    total = call_vol + put_vol
+    if total == 0:
+        return "Neutral"
+    cp_ratio = call_vol / total
+    if cp_ratio >= 0.60:
+        return "Bullish"
+    if cp_ratio <= 0.40:
+        return "Bearish"
+    return "Neutral"
+
+
+# ---------------------------------------------------------------------------
+# Advanced alert formatter
+# ---------------------------------------------------------------------------
+
+def format_advanced_alert(
+    ticker: str,
+    setup_type: str,
+    confidence_pct: float,
+    entry: float,
+    stop: float,
+    target: float,
+    rvol: float,
+    market_regime: str,
+    confirmation_count: int = 2,
+    win_rate_pct: Optional[float] = None,
+    options: Optional[Dict] = None,
+    triggered_modules: Optional[List[str]] = None,
+    module_details: Optional[Dict[str, str]] = None,
+    timestamp: Optional[datetime] = None,
+) -> str:
+    """Build an institutional-grade structured alert string.
+
+    Output format::
+
+        🔥 HIGH CONFIDENCE SETUP — AAPL
+
+        TICKER:        AAPL
+        SETUP:         Resistance Breakout
+        CONFIDENCE:    82%
+        RISK:          Medium
+        GRADE:         A
+
+        ENTRY:         148.35
+        STOP:          145.20
+        TARGET:        154.50
+        R:R:           2.1
+
+        VOLUME:        2.4x Avg
+        OPTIONS FLOW:  Bullish
+        WIN RATE:      63%
+        MARKET REGIME: Risk-On
+
+        Triggers: Volume Spike, Ascending Triangle Breakout, Call Flow Spike
+
+    Args:
+        ticker:             Stock symbol.
+        setup_type:         Primary setup name (e.g. ``"Resistance Breakout"``).
+        confidence_pct:     Confidence score (0–100).
+        entry:              Suggested entry price.
+        stop:               Stop-loss price.
+        target:             Take-profit price.
+        rvol:               Relative volume ratio.
+        market_regime:      Market context string (e.g. ``"Risk-On"``).
+        confirmation_count: Number of independent signal confirmations.
+        win_rate_pct:       Historical win rate (optional).
+        options:            Raw options dict for flow sentiment classification.
+        triggered_modules:  Names of signals that fired.
+        module_details:     Detail strings per signal.
+        timestamp:          Alert timestamp (defaults to ``datetime.now()``).
+
+    Returns:
+        Formatted multi-line alert string.
+    """
+    ts = timestamp or datetime.now()
+    risk = _risk_grade(confidence_pct)
+    grade = _setup_strength(confirmation_count, confidence_pct)
+    options_flow = _options_flow_label(options)
+    risk_amount = abs(entry - stop)
+    rr = round(abs(target - entry) / risk_amount, 1) if risk_amount > 0 else 0.0
+    direction = "Long" if target > entry else "Short"
+
+    # Header emoji based on confidence
+    if confidence_pct >= 80:
+        header_emoji = "🔥"
+        header_label = "HIGH CONFIDENCE SETUP"
+    elif confidence_pct >= 70:
+        header_emoji = "🚨"
+        header_label = "HIGH PRIORITY SETUP"
+    else:
+        header_emoji = "👀"
+        header_label = "WATCHLIST SETUP"
+
+    lines: List[str] = [
+        f"{header_emoji} {header_label} — {ticker}",
+        "",
+        f"TICKER:        {ticker}",
+        f"SETUP:         {setup_type}",
+        f"DIRECTION:     {direction}",
+        f"CONFIDENCE:    {confidence_pct:.0f}%",
+        f"RISK:          {risk}",
+        f"GRADE:         {grade}",
+        "",
+        f"ENTRY:         {entry:.2f}",
+        f"STOP:          {stop:.2f}",
+        f"TARGET:        {target:.2f}",
+        f"R:R:           {rr:.1f}",
+        "",
+        f"VOLUME:        {rvol:.1f}x Avg",
+        f"OPTIONS FLOW:  {options_flow}",
+    ]
+
+    if win_rate_pct is not None:
+        lines.append(f"WIN RATE:      {win_rate_pct:.0f}%")
+
+    lines.append(f"MARKET REGIME: {market_regime}")
+
+    if triggered_modules:
+        module_names = [m.replace("_", " ").title() for m in triggered_modules]
+        lines += [
+            "",
+            f"Triggers: {', '.join(module_names)}",
+        ]
+        if module_details:
+            for mod in triggered_modules:
+                detail = module_details.get(mod, "")
+                if detail:
+                    display = mod.replace("_", " ").title()
+                    lines.append(f"  · {display}: {detail}")
+
+    lines.append(f"\nTime: {ts.strftime('%Y-%m-%d %I:%M %p EST')}")
+
+    return "\n".join(lines)
+
