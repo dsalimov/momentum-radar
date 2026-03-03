@@ -92,18 +92,25 @@ _HELP_TEXT = (
     "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
     "News & Sentiment:\n"
     "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
+     copilot/add-advanced-squeeze-feature
+    "  /marketnews - Full market-wide news search with AI summary\n\n"
+=======
     "  /news market - Market-wide news with AI sentiment summary\n"
     "  /news premarket - Pre-market focused news scan\n"
     "  /marketnews - Full market-wide news search with AI summary\n"
     "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
     "Market Calendar:\n"
     "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
+      main
     "Automated Alerts:\n"
     "  /alerts on     - Enable hourly squeeze + signal alerts\n"
     "  /alerts off    - Disable automated alerts\n"
     "  /alerts status - Show your current alert preference\n\n"
+     copilot/add-advanced-squeeze-feature
+=======
     "Market Heatmap:\n"
     "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
+      main
     "Use /status to check bot health."
 )
 
@@ -290,9 +297,15 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _earnings_handler_impl(update, context, ticker)
 
+    copilot/add-advanced-squeeze-feature
+    async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _tradingview_handler_impl(update, context, ticker)
+=======
     async def _heatmap_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _heatmap_handler_impl(update, context)
 
+        main
     async def _alerts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _alerts_handler_impl(update, context)
 
@@ -338,6 +351,10 @@ async def start_telegram_bot() -> None:  # pragma: no cover
                 "  /alerts off    – disable automated alerts\n"
                 "  /alerts status – show current alert preference"
             )
+ copilot/add-advanced-squeeze-feature
+
+=======
+     main
 
     async def _options_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str
@@ -1356,8 +1373,13 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("dates", _dates_handler))
     app.add_handler(CommandHandler("fundamentals", _fundamentals_handler))
     app.add_handler(CommandHandler("earnings", _earnings_handler))
+   copilot/add-advanced-squeeze-feature
+    app.add_handler(CommandHandler("tradingview", _tradingview_handler))
+    app.add_handler(CommandHandler("alerts", _alerts_handler))
+=======
     app.add_handler(CommandHandler("alerts", _alerts_handler))
     app.add_handler(CommandHandler("heatmap", _heatmap_handler))
+        main
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )

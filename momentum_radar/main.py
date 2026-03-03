@@ -282,12 +282,20 @@ async def run_scanner() -> None:
     scheduler = start_scheduler(universe, fetcher, send_telegram_alert)
 
     # Start hourly squeeze + signal scanner
+    copilot/add-advanced-squeeze-feature
+    from momentum_radar.premarket.scheduler import (
+=======
     from momentum_radar.services.scheduler import (
+        main
         start_hourly_scheduler,
         stop_hourly_scheduler,
     )
     hourly_scheduler = start_hourly_scheduler(universe, fetcher, send_telegram_alert)
 
+      copilot/add-advanced-squeeze-feature
+
+=======
+         main
     try:
         while not _SHUTDOWN:
             now = datetime.now()
@@ -324,6 +332,10 @@ async def run_scanner() -> None:
     finally:
         stop_scheduler(scheduler)
         stop_hourly_scheduler(hourly_scheduler)
+        copilot/add-advanced-squeeze-feature
+
+=======
+     main
 
     logger.info("Momentum Signal Radar shut down cleanly.")
 

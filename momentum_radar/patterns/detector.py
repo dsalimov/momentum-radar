@@ -47,7 +47,7 @@ PatternResult = Dict                           # {"pattern", "confidence", "key_
 # Constants
 # ---------------------------------------------------------------------------
 
-PATTERN_LOOKBACK = 30  # use only the last 30 candles for detection
+PATTERN_LOOKBACK = 60  # use only the last 60 candles for detection
 FLAG_WIDTH_THRESHOLD = 0.05  # max flag channel width as fraction of pole top price
 
 
