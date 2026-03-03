@@ -94,7 +94,7 @@ _HELP_TEXT = (
     "News Commands:\n"
     "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
     "  /marketnews - Full market-wide news search with AI summary\n\n"
-        "Automated Alerts:\n"
+    "Automated Alerts:\n"
     "  /alerts on     - Enable hourly squeeze + signal alerts\n"
     "  /alerts off    - Disable automated alerts\n"
     "  /alerts status - Show your current alert preference\n\n"

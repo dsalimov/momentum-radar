@@ -325,7 +325,6 @@ async def run_scanner() -> None:
         stop_hourly_scheduler(hourly_scheduler)
 
 
-
     logger.info("Momentum Signal Radar shut down cleanly.")
 
 
