@@ -1,5 +1,5 @@
 """
-services/scheduler.py – Hourly automated squeeze and signal scan.
+services/scheduler.py – Hourly automated squeeze, signal, and volume scan.
 
 Uses APScheduler to run every hour.  Each cycle:
 
@@ -10,6 +10,8 @@ Uses APScheduler to run every hour.  Each cycle:
 5. Sends Telegram alerts (top 5 per hour max) when:
    - Squeeze score ≥ 75, **or**
    - 2+ signal confirmations triggered
+6. Scans for unusual volume (RVOL ≥ 2.0 vs 30-day avg) and sends up to 3
+   additional volume-spike alerts per hour
 
 Spam filtering is enforced via
 :func:`~momentum_radar.storage.database.should_send_squeeze_alert`.
@@ -37,6 +39,49 @@ _MAX_ALERTS_PER_HOUR: int = 5
 
 # Minimum squeeze score to trigger automated alert
 _MIN_SQUEEZE_SCORE: int = 75
+
+# Minimum RVOL (vs 30-day avg) to trigger an automated volume-spike alert
+_MIN_RVOL_ALERT: float = 2.0
+
+# Maximum volume-spike alerts per hourly cycle (separate cap from squeeze)
+_MAX_VOLUME_ALERTS_PER_HOUR: int = 3
+
+
+def _format_volume_spike_alert(spike: dict) -> str:
+    """Format a volume-spike alert string for Telegram delivery.
+
+    Args:
+        spike: Dict with keys ``ticker``, ``rvol``, ``today_volume``,
+               ``last_close``, ``pct_change`` (from
+               :func:`~momentum_radar.data.volume_scanner.scan_volume_spikes`).
+
+    Returns:
+        Formatted multi-line string.
+    """
+    ticker = spike["ticker"]
+    rvol = spike["rvol"]
+    today_vol = spike["today_volume"]
+    last_close = spike["last_close"]
+    pct_change = spike["pct_change"]
+
+    direction = "+" if pct_change >= 0 else ""
+    vol_str = (
+        f"{today_vol / 1e6:.1f}M"
+        if today_vol >= 1_000_000
+        else f"{today_vol / 1e3:.0f}K"
+    )
+
+    lines = [
+        f"📈 UNUSUAL VOLUME ALERT: {ticker}",
+        "",
+        f"RVOL:   {rvol:.1f}x 30-day average",
+        f"Price:  ${last_close:.2f}  ({direction}{pct_change:.1f}%)",
+        f"Volume: {vol_str}",
+        "",
+        "⚠️ High volume can precede significant price moves. "
+        "Always apply your own risk management.",
+    ]
+    return "\n".join(lines)
 
 
 def _run_hourly_scan(
@@ -105,6 +150,7 @@ def _run_hourly_scan(
     # Sort by score desc, then confirmation count desc
     alert_queue.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
+    alerted_tickers: set = set()
     for score, conf_count, report, confirmations in alert_queue[:_MAX_ALERTS_PER_HOUR]:
         ticker = report["ticker"]
         try:
@@ -124,6 +170,7 @@ def _run_hourly_scan(
                 short_interest=report.get("short_interest_pct"),
                 float_shares=report.get("float_shares"),
             )
+            alerted_tickers.add(ticker)
             alerts_sent += 1
             logger.info(
                 "Hourly alert sent: %s (score=%d, confs=%d)",
@@ -132,10 +179,65 @@ def _run_hourly_scan(
         except Exception as exc:
             logger.error("Failed to send hourly alert for %s: %s", ticker, exc)
 
+    # -----------------------------------------------------------------------
+    # Step 4: Unusual volume scan
+    # Scan for stocks with RVOL >= _MIN_RVOL_ALERT that were NOT already
+    # covered by the squeeze path.
+    # -----------------------------------------------------------------------
+    try:
+        from momentum_radar.data.volume_scanner import scan_volume_spikes
+        vol_spikes = scan_volume_spikes(
+            tickers, fetcher, top_n=10, min_rvol=_MIN_RVOL_ALERT
+        )
+    except Exception as exc:
+        logger.error("Hourly scan: volume spike scan failed: %s", exc)
+        vol_spikes = []
+
+    vol_alerts_sent = 0
+    for spike in vol_spikes:
+        if vol_alerts_sent >= _MAX_VOLUME_ALERTS_PER_HOUR:
+            break
+
+        ticker = spike["ticker"]
+
+        # Don't double-alert tickers already covered by squeeze path
+        if ticker in alerted_tickers:
+            continue
+
+        # Spam filter expects an integer score (0–100 range).  RVOL typically
+        # falls in the 1–10× range, so multiplying by 10 maps it to 10–100.
+        rvol_score = int(spike["rvol"] * 10)
+        if not should_send_squeeze_alert(ticker, rvol_score):
+            logger.debug("Hourly scan: volume alert for %s suppressed (spam filter)", ticker)
+            continue
+
+        try:
+            text = _format_volume_spike_alert(spike)
+            send_fn(text)
+            record_squeeze_alert(ticker, rvol_score)
+            save_alert(
+                ticker=ticker,
+                price=spike.get("last_close"),
+                score=rvol_score,
+                alert_level="volume_spike",
+                modules_triggered=["volume_spike"],
+                rvol=spike.get("rvol"),
+            )
+            alerted_tickers.add(ticker)
+            vol_alerts_sent += 1
+            logger.info(
+                "Volume spike alert sent: %s (RVOL=%.1f)",
+                ticker, spike["rvol"],
+            )
+        except Exception as exc:
+            logger.error("Failed to send volume spike alert for %s: %s", ticker, exc)
+
     logger.info(
-        "Hourly scan complete: %d candidate(s) evaluated, %d alert(s) sent.",
+        "Hourly scan complete: %d candidate(s) evaluated, "
+        "%d squeeze alert(s) sent, %d volume alert(s) sent.",
         len(candidates),
         alerts_sent,
+        vol_alerts_sent,
     )
 
 
