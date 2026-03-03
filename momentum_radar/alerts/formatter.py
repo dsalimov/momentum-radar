@@ -57,6 +57,8 @@ def format_alert(
     float_shares: Optional[float] = None,
     atr_ratio: Optional[float] = None,
     timestamp: Optional[datetime] = None,
+    weighted_score: int = 0,
+    module_scores: Optional[Dict[str, int]] = None,
 ) -> str:
     """Build a formatted alert string.
 
@@ -65,7 +67,7 @@ def format_alert(
         price: Current price.
         pct_change: Percentage change today (e.g. 6.4 for +6.4%).
         rvol: Relative volume ratio.
-        score: Total signal score.
+        score: Raw signal score.
         alert_level: :class:`~momentum_radar.signals.scoring.AlertLevel`.
         triggered_modules: List of signal names that fired.
         module_details: Mapping of signal name to detail string.
@@ -73,6 +75,8 @@ def format_alert(
         float_shares: Float shares count.
         atr_ratio: Current day range divided by ATR.
         timestamp: Alert timestamp (defaults to ``datetime.now()``).
+        weighted_score: Weighted quality score (0-100+ scale).
+        module_scores: Per-module raw scores for the score breakdown section.
 
     Returns:
         Formatted alert string.
@@ -89,7 +93,7 @@ def format_alert(
         f"Price: {price:.2f}",
         f"% Change: {pct_sign}{pct_change:.1f}%",
         f"RVOL: {rvol:.1f}",
-        f"Score: {score}",
+        f"Score: {score}  |  Quality Score: {weighted_score}",
         "",
         "Triggers:",
     ]
@@ -105,6 +109,20 @@ def format_alert(
     if not triggered_modules:
         lines.append("  (none)")
 
+    # Score breakdown – show weighted contribution per triggered module
+    if module_scores and triggered_modules:
+        from momentum_radar.signals.scoring import _MODULE_WEIGHTS, _DEFAULT_MODULE_WEIGHT
+        lines.append("")
+        lines.append("Score Breakdown:")
+        for module in triggered_modules:
+            raw = module_scores.get(module, 0)
+            weight = _MODULE_WEIGHTS.get(module, _DEFAULT_MODULE_WEIGHT)
+            pts = int(weight * (raw / 2.0))
+            display_name = module.replace("_", " ").title()
+            lines.append(f"  {display_name:<28} {pts:>3} pts  (raw {raw}/2 x wt {weight})")
+        lines.append(f"  {'-'*42}")
+        lines.append(f"  {'Total Quality Score':<28} {weighted_score:>3} / threshold {_import_threshold()}")
+
     lines.append("")
 
     if atr_ratio is not None:
@@ -116,6 +134,12 @@ def format_alert(
     lines.append(f"Time: {ts.strftime('%I:%M %p EST')}")
 
     return "\n".join(lines)
+
+
+def _import_threshold() -> int:
+    """Return the configured signal score minimum (avoids circular import)."""
+    from momentum_radar.config import config
+    return config.scores.signal_score_minimum
 
 
 # ---------------------------------------------------------------------------

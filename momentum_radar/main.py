@@ -96,16 +96,36 @@ signal.signal(signal.SIGTERM, _handle_shutdown)
 # ---------------------------------------------------------------------------
 
 _last_alert_time: Dict[str, float] = {}
+_last_alert_direction: Dict[str, str] = {}
 
 
-def _is_on_cooldown(ticker: str) -> bool:
+def _signal_direction(pct_change: float) -> str:
+    """Return ``"bull"`` for positive % change, ``"bear"`` for negative."""
+    return "bull" if pct_change >= 0 else "bear"
+
+
+def _is_on_cooldown(ticker: str, direction: str) -> bool:
+    """Return True if *ticker* is on cooldown for the given *direction*.
+
+    Signals in the **same direction** respect the full ``ALERT_COOLDOWN``
+    window.  A signal in the **opposite direction** is allowed immediately
+    (direction reversal is a new event).
+    """
     cooldown = config.scan.alert_cooldown_seconds
     last = _last_alert_time.get(ticker, 0.0)
-    return (time.time() - last) < cooldown
+    elapsed = time.time() - last
+    if elapsed >= cooldown:
+        return False  # cooldown expired – always allow
+    # If direction flipped since last alert, allow the new signal
+    last_dir = _last_alert_direction.get(ticker, "")
+    if last_dir and last_dir != direction:
+        return False
+    return True
 
 
-def _mark_alerted(ticker: str) -> None:
+def _mark_alerted(ticker: str, direction: str) -> None:
     _last_alert_time[ticker] = time.time()
+    _last_alert_direction[ticker] = direction
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +186,29 @@ def _scan_ticker(
         alert_level: AlertLevel = result["alert_level"]
         triggered: List[str] = result["triggered_modules"]
         details: Dict[str, str] = result["module_details"]
+        weighted_score: int = result["weighted_score"]
+        confirmation_count: int = result["confirmation_count"]
+        module_scores: Dict[str, int] = result["module_scores"]
+        chop_suppressed: bool = result["chop_suppressed"]
 
-        logger.debug("%s → score=%d level=%s", ticker, score, alert_level.value)
+        logger.debug(
+            "%s → score=%d weighted=%d confs=%d chop=%s level=%s",
+            ticker, score, weighted_score, confirmation_count,
+            chop_suppressed, alert_level.value,
+        )
 
-        if score < config.scores.alert_minimum:
-            return
+        # High-probability quality gate: require sufficient weighted score AND
+        # at least min_signal_confirmations independent modules
+        min_weighted = config.scores.signal_score_minimum
+        min_confs = config.scores.min_signal_confirmations
 
-        if _is_on_cooldown(ticker):
-            logger.debug("%s is on alert cooldown, skipping.", ticker)
+        if weighted_score < min_weighted or confirmation_count < min_confs:
+            logger.debug(
+                "%s – gate not met (weighted=%d/%d, confs=%d/%d)%s",
+                ticker, weighted_score, min_weighted,
+                confirmation_count, min_confs,
+                " [chop suppressed]" if chop_suppressed else "",
+            )
             return
 
         # Gather display values
@@ -188,6 +223,14 @@ def _scan_ticker(
                     pct_change = ((price - prev) / prev) * 100
         except Exception:
             pass
+
+        direction = _signal_direction(pct_change)
+
+        if _is_on_cooldown(ticker, direction):
+            logger.debug(
+                "%s is on %s cooldown, skipping.", ticker, direction
+            )
+            return
 
         rvol = compute_rvol(bars, daily) or 0.0
         atr = compute_atr(daily) if daily is not None else None
@@ -216,14 +259,15 @@ def _scan_ticker(
             float_shares=float_shares_val,
             atr_ratio=atr_ratio,
             timestamp=now,
+            weighted_score=weighted_score,
+            module_scores=module_scores,
         )
 
         # Console output
         logger.info("\n%s", message)
 
         # Telegram
-        if score >= config.scores.alert_minimum:
-            send_telegram_alert(message)
+        send_telegram_alert(message)
 
         # Persist
         save_alert(
@@ -255,7 +299,7 @@ def _scan_ticker(
             timestamp=now,
         )
 
-        _mark_alerted(ticker)
+        _mark_alerted(ticker, direction)
 
     except Exception as exc:
         logger.error("Unhandled error scanning %s: %s", ticker, exc, exc_info=True)
