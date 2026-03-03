@@ -28,6 +28,25 @@ from momentum_radar.data.data_fetcher import BaseDataFetcher
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Named constants for timing delays and borrow rate thresholds
+# ---------------------------------------------------------------------------
+
+# Seconds to wait for a market data snapshot to arrive after subscribing
+_MARKET_DATA_DELAY: float = 0.5
+
+# Seconds to wait for shortable shares count to arrive
+_SHORTABLE_SHARES_DELAY: float = 0.3
+
+# Shortable share count thresholds for borrow fee tier mapping
+_ETB_SHARE_THRESHOLD: int = 1_000_000    # > this → easy-to-borrow
+_HTB_SHARE_THRESHOLD: int = 100_000     # <= this → hard-to-borrow
+
+# Annual borrow rate (decimal) per tier
+_BORROW_RATE_ETB: float = 0.0025   # ~0.25 % – easy-to-borrow
+_BORROW_RATE_MTB: float = 0.10     # ~10 %   – moderate-to-borrow
+_BORROW_RATE_HTB: float = 0.35     # ~35 %   – hard-to-borrow
+
 
 class IBKRDataFetcher(BaseDataFetcher):
     """Data fetcher backed by Interactive Brokers TWS / IB Gateway via ib_insync.
@@ -203,7 +222,7 @@ class IBKRDataFetcher(BaseDataFetcher):
         try:
             contract = self._make_contract(ticker)
             ticker_data = self._ib.reqMktData(contract, "", False, False)
-            self._ib.sleep(0.5)  # allow market data snapshot to arrive
+            self._ib.sleep(_MARKET_DATA_DELAY)  # allow market data snapshot to arrive
             price = ticker_data.last or ticker_data.close or None
             prev_close = ticker_data.close or None
             volume = ticker_data.volume or None
@@ -265,20 +284,16 @@ class IBKRDataFetcher(BaseDataFetcher):
         try:
             contract = self._make_contract(ticker)
             shortable = self._ib.reqShortableShares(contract)
-            self._ib.sleep(0.3)
+            self._ib.sleep(_SHORTABLE_SHARES_DELAY)
             if shortable is None or shortable <= 0:
                 return None
-            # IBKR provides shortable share count; map to estimated fee tier
-            # Based on typical IBKR borrow fee schedule:
-            # > 1M shares available  → easy-to-borrow  (~0.25% p.a.)
-            # 100K–1M               → moderate borrow  (~5–15% p.a.)
-            # < 100K                → hard-to-borrow   (~25–100% p.a.)
-            if shortable > 1_000_000:
-                return 0.0025
-            elif shortable > 100_000:
-                return 0.10
+            # Map shortable share count to estimated annual borrow fee tier
+            if shortable > _ETB_SHARE_THRESHOLD:
+                return _BORROW_RATE_ETB
+            elif shortable > _HTB_SHARE_THRESHOLD:
+                return _BORROW_RATE_MTB
             else:
-                return 0.35
+                return _BORROW_RATE_HTB
         except Exception as exc:
             logger.debug("IBKR get_borrow_rate(%s): %s", ticker, exc)
             return None

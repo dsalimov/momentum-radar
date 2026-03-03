@@ -30,7 +30,7 @@ _SECTOR_ETFS: Dict[str, str] = {
     "Healthcare": "XLV",
     "Energy": "XLE",
     "Consumer Disc.": "XLY",
-    "Consumer Stap.": "XLP",
+    "Consumer Staples": "XLP",
     "Industrials": "XLI",
     "Materials": "XLB",
     "Real Estate": "XLRE",
