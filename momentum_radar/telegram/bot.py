@@ -98,6 +98,10 @@ _HELP_TEXT = (
     "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
     "Market Calendar:\n"
     "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
+    "Supply & Demand Zones:\n"
+    "  /zones AAPL  - All supply & demand zones for a ticker\n"
+    "  /supply AAPL - Supply (resistance) zones only\n"
+    "  /demand AAPL - Demand (support) zones only\n\n"
     "Automated Alerts:\n"
     "  /alerts on     - Enable hourly squeeze + signal alerts\n"
     "  /alerts off    - Disable automated alerts\n"
@@ -223,6 +227,15 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         elif text_lower.startswith("earnings "):
             ticker = text[len("earnings "):].strip().upper()
             await _earnings_handler_impl(update, context, ticker)
+        elif text_lower.startswith("zones "):
+            ticker = text[len("zones "):].strip().upper()
+            await _zones_handler_impl(update, context, ticker)
+        elif text_lower.startswith("supply "):
+            ticker = text[len("supply "):].strip().upper()
+            await _zones_handler_impl(update, context, ticker, zone_type_filter="supply")
+        elif text_lower.startswith("demand "):
+            ticker = text[len("demand "):].strip().upper()
+            await _zones_handler_impl(update, context, ticker, zone_type_filter="demand")
         else:
             await _run_scan(update, context, text)
 
@@ -289,6 +302,18 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _earnings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _earnings_handler_impl(update, context, ticker)
+
+    async def _zones_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _zones_handler_impl(update, context, ticker)
+
+    async def _supply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _zones_handler_impl(update, context, ticker, zone_type_filter="supply")
+
+    async def _demand_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        ticker = " ".join(context.args).strip().upper() if context.args else ""
+        await _zones_handler_impl(update, context, ticker, zone_type_filter="demand")
 
     async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
@@ -1123,6 +1148,81 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
             await update.message.reply_text(chunk)
 
+    async def _zones_handler_impl(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        ticker: str,
+        zone_type_filter: Optional[str] = None,
+    ) -> None:
+        """Handle /zones, /supply, /demand commands.
+
+        Args:
+            ticker:           Stock symbol.
+            zone_type_filter: ``"supply"``, ``"demand"``, or ``None`` for both.
+        """
+        type_label = zone_type_filter.title() if zone_type_filter else "Supply & Demand"
+        if not ticker:
+            cmd = f"/{zone_type_filter or 'zones'}"
+            await update.message.reply_text(f"Usage: {cmd} AAPL")
+            return
+
+        await update.message.reply_text(
+            f"Scanning {type_label} zones for {ticker}… This may take a moment."
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.structure_supply_demand_engine import (
+                scan_ticker as sd_scan,
+                format_zone_alert,
+            )
+            result = await loop.run_in_executor(
+                None, lambda: sd_scan(ticker, fetcher=fetcher)
+            )
+        except Exception as exc:
+            logger.error("S&D zone scan failed for %s: %s", ticker, exc)
+            await update.message.reply_text(
+                f"Could not scan zones for {ticker}. Make sure it's a valid US stock ticker."
+            )
+            return
+
+        all_zones = result.get("all_zones", [])
+        if zone_type_filter:
+            all_zones = [z for z in all_zones if z.zone_type == zone_type_filter]
+
+        if not all_zones:
+            await update.message.reply_text(
+                f"No {type_label} zones detected for {ticker}."
+            )
+            return
+
+        lines = [f"{type_label} Zones: {ticker}", ""]
+        for i, zone in enumerate(all_zones[:5], 1):
+            z_emoji = "🔴" if zone.zone_type == "supply" else "🟢"
+            z_type = zone.zone_type.upper()
+            lines += [
+                f"{i}. {z_emoji} {z_type}  [{zone.timeframe.title()}]",
+                f"   Range:    ${zone.zone_low:.2f} – ${zone.zone_high:.2f}",
+                f"   Strength: {zone.strength_score:.0f}/100 ({zone.strength_label})",
+                f"   Status:   {zone.status.title()} ({zone.touch_count} "
+                f"touch{'es' if zone.touch_count != 1 else ''})",
+                f"   Impulse:  {zone.impulse_magnitude:.1f}× ATR  |  "
+                f"Vol: {zone.volume_expansion:.1f}× avg",
+                "",
+            ]
+
+        active_zone = result.get("active_zone")
+        if active_zone and (
+            not zone_type_filter or active_zone.zone_type == zone_type_filter
+        ):
+            alert_text = result.get("alert_text", "")
+            if alert_text:
+                lines.append("── ACTIVE ZONE (price inside) ──")
+                lines.append(alert_text)
+
+        msg = _safe_text("\n".join(lines))
+        for chunk in [msg[i:i + 4000] for i in range(0, len(msg), 4000)]:
+            await update.message.reply_text(chunk)
+
     async def _morningbrief_handler_impl(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1385,12 +1485,31 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("dates", _dates_handler))
     app.add_handler(CommandHandler("fundamentals", _fundamentals_handler))
     app.add_handler(CommandHandler("earnings", _earnings_handler))
+    app.add_handler(CommandHandler("zones", _zones_handler))
+    app.add_handler(CommandHandler("supply", _supply_handler))
+    app.add_handler(CommandHandler("demand", _demand_handler))
     app.add_handler(CommandHandler("tradingview", _tradingview_handler))
     app.add_handler(CommandHandler("alerts", _alerts_handler))
     app.add_handler(CommandHandler("heatmap", _heatmap_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )
+
+    # Start automated schedulers so alerts are delivered even in bot mode
+    from momentum_radar.storage.database import init_db
+    from momentum_radar.alerts.telegram_alert import send_telegram_alert as _send_alert
+    from momentum_radar.premarket.scheduler import (
+        start_scheduler as _start_premarket,
+        stop_scheduler as _stop_premarket,
+    )
+    from momentum_radar.services.scheduler import (
+        start_hourly_scheduler as _start_hourly,
+        stop_hourly_scheduler as _stop_hourly,
+    )
+
+    init_db()
+    premarket_sched = _start_premarket(universe, fetcher, _send_alert)
+    hourly_sched = _start_hourly(universe, fetcher, _send_alert)
 
     logger.info("Starting Telegram pattern bot (polling)…")
     async with app:
@@ -1403,5 +1522,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         except asyncio.CancelledError:
             pass
         finally:
+            _stop_premarket(premarket_sched)
+            _stop_hourly(hourly_sched)
             await app.updater.stop()
             await app.stop()
