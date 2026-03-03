@@ -114,6 +114,10 @@ class ScoreThresholds:
         default_factory=lambda: _int("SCORE_STRONG_MOMENTUM", 8)
     )
     alert_minimum: int = field(default_factory=lambda: _int("SCORE_ALERT_MINIMUM", 5))
+    # Minimum confidence % for the advanced alert engine (0–100)
+    min_confidence_pct: float = field(
+        default_factory=lambda: _float("MIN_CONFIDENCE_PCT", 70.0)
+    )
 
 
 @dataclass
