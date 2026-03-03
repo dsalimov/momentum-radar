@@ -1,27 +1,40 @@
 """
 services/signal_engine.py – Multi-confirmation signal engine.
 
-A signal is only considered actionable if at least **2 independent
-confirmations** align.  Three confirmations produce a "HIGH CONFIDENCE"
-priority rating.
+A signal is only considered actionable if at least **3 independent
+confirmations** align.  Four or more confirmations produce a
+"HIGH CONFIDENCE" priority rating.
 
 Confirmation types
 ------------------
-1. **Volume**  – RVOL ≥ 2.0 or volume > 2× 30-day average
-2. **Pattern** – Breakout from ascending triangle, cup & handle, flag,
-                 double bottom, or support bounce (confidence ≥ 70 %)
-3. **Candlestick** – Bullish engulfing / hammer at support, or bearish
-                     engulfing / shooting star at resistance
-4. **Options**  – Call volume spike, put volume spike, or gamma-flip zone
+1. **Volume**          – RVOL ≥ 2.0 or volume > 2× 30-day average
+2. **Pattern**         – Breakout from ascending triangle, cup & handle, flag,
+                         double bottom, or support bounce (confidence ≥ 70 %)
+3. **Candlestick**     – Bullish engulfing / hammer at support, or bearish
+                         engulfing / shooting star at resistance
+4. **Options**         – Call volume spike, put volume spike, or gamma-flip zone
+5. **HTF Trend**       – Price above daily EMA21 and EMA50 (higher-timeframe bias)
+6. **Momentum**        – RSI in bullish zone with positive MACD histogram
+7. **Retest**          – Price returns to and holds a recently broken key level
+8. **Liquidity Sweep** – Wick below/above a swing point followed by strong reversal
+
+Fake breakout filter
+--------------------
+A breakout is rejected (no signal sent) if any of the following are true:
+
+- Volume below average on the break candle
+- Candle has a large wick (wick > 50 % of total range)
+- RSI divergence against breakout direction
 
 Signal priority
 ---------------
-- 0–1 confirmations → NO SIGNAL
-- 2 confirmations   → ALERT
-- 3+ confirmations  → HIGH CONFIDENCE ALERT
+- 0–2 confirmations → NO SIGNAL
+- 3 confirmations   → ALERT
+- 4+ confirmations  → HIGH CONFIDENCE ALERT
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -42,7 +55,7 @@ class Confirmation:
     """A single confirmed signal component."""
 
     name: str           # human-readable label shown in alerts
-    category: str       # "volume" | "pattern" | "candlestick" | "options"
+    category: str       # "volume" | "pattern" | "candlestick" | "options" | "htf_trend" | "momentum" | "retest" | "liquidity_sweep"
     detail: str         # short description, e.g. "RVOL 3.4x average"
     confidence: float   # 0–100
 
@@ -295,6 +308,303 @@ def _check_options(options: Optional[Dict]) -> Optional[Confirmation]:
 
 
 # ---------------------------------------------------------------------------
+# Higher-timeframe trend alignment
+# ---------------------------------------------------------------------------
+
+def _check_htf_trend(daily: Optional[pd.DataFrame]) -> Optional[Confirmation]:
+    """Return a Confirmation if the daily trend is bullish (HTF bias confirmed).
+
+    Bullish alignment: last close > EMA21 > EMA50 on daily bars.
+
+    Args:
+        daily: Daily OHLCV DataFrame (50+ bars recommended).
+
+    Returns:
+        :class:`Confirmation` or ``None``.
+    """
+    if daily is None or len(daily) < 50 or "close" not in daily.columns:
+        return None
+
+    closes = daily["close"]
+    last_close = float(closes.iloc[-1])
+
+    ema21 = float(closes.ewm(span=21, adjust=False).mean().iloc[-1])
+    ema50 = float(closes.ewm(span=50, adjust=False).mean().iloc[-1])
+
+    if last_close > ema21 > ema50:
+        return Confirmation(
+            name="HTF Trend Alignment",
+            category="htf_trend",
+            detail=f"Daily price ${last_close:.2f} > EMA21 {ema21:.2f} > EMA50 {ema50:.2f}",
+            confidence=80.0,
+        )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Momentum alignment (RSI + MACD)
+# ---------------------------------------------------------------------------
+
+def _check_momentum(
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+) -> Optional[Confirmation]:
+    """Return a Confirmation if RSI is in a bullish zone with positive MACD histogram.
+
+    Uses intraday bars when available, falls back to daily bars.
+
+    Args:
+        bars:  Intraday OHLCV DataFrame.
+        daily: Daily OHLCV DataFrame.
+
+    Returns:
+        :class:`Confirmation` or ``None``.
+    """
+    df = bars if (bars is not None and len(bars) >= 14) else daily
+    if df is None or len(df) < 14 or "close" not in df.columns:
+        return None
+
+    closes = df["close"]
+
+    # RSI
+    delta = closes.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, float("nan"))
+    rsi_series = 100 - (100 / (1 + rs))
+    rsi = float(rsi_series.iloc[-1]) if not rsi_series.empty else float("nan")
+
+    # MACD histogram
+    ema12 = closes.ewm(span=12, adjust=False).mean()
+    ema26 = closes.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    histogram = float((macd_line - signal_line).iloc[-1])
+
+    if math.isnan(rsi):
+        return None
+
+    if 40 <= rsi <= 70 and histogram > 0:
+        return Confirmation(
+            name="Momentum Alignment",
+            category="momentum",
+            detail=f"RSI {rsi:.1f} in momentum zone, MACD hist +{histogram:.4f}",
+            confidence=75.0,
+        )
+
+    # Oversold bounce with MACD turning positive
+    if rsi < 35 and histogram > 0:
+        return Confirmation(
+            name="Oversold Bounce",
+            category="momentum",
+            detail=f"RSI {rsi:.1f} oversold + MACD turning positive",
+            confidence=72.0,
+        )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Retest confirmation
+# ---------------------------------------------------------------------------
+
+def _check_retest(daily: Optional[pd.DataFrame]) -> Optional[Confirmation]:
+    """Return a Confirmation if price has returned to and held a key broken level.
+
+    A retest is detected when the last close is within 1.5 % of the prior
+    20-bar high (price broke above, pulled back, and is holding the breakout
+    level as support).
+
+    Args:
+        daily: Daily OHLCV DataFrame.
+
+    Returns:
+        :class:`Confirmation` or ``None``.
+    """
+    if daily is None or len(daily) < 22 or "close" not in daily.columns:
+        return None
+
+    closes = daily["close"]
+    highs = daily["high"]
+    lows = daily["low"]
+
+    last_close = float(closes.iloc[-1])
+    prior_high = float(highs.iloc[-22:-2].max())
+    prior_low = float(lows.iloc[-22:-2].min())
+
+    # Bullish retest: price previously broke above prior_high and is retesting it
+    if prior_high > 0 and abs(last_close - prior_high) / prior_high <= 0.015:
+        return Confirmation(
+            name="Retest of Key Level",
+            category="retest",
+            detail=f"Price ${last_close:.2f} retesting broken resistance ${prior_high:.2f}",
+            confidence=72.0,
+        )
+
+    # Support retest: price bounced from prior low area
+    if prior_low > 0 and abs(last_close - prior_low) / prior_low <= 0.015:
+        return Confirmation(
+            name="Retest of Support",
+            category="retest",
+            detail=f"Price ${last_close:.2f} holding support ${prior_low:.2f}",
+            confidence=70.0,
+        )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Liquidity sweep confirmation
+# ---------------------------------------------------------------------------
+
+def _check_liquidity_sweep(
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+) -> Optional[Confirmation]:
+    """Return a Confirmation if a liquidity sweep (stop hunt + reversal) is detected.
+
+    A liquidity sweep is identified when:
+    - The last candle wicked below a recent swing low (or above a swing high)
+    - The candle then closed back above the swing low (or below the swing high)
+    - Indicating a stop hunt followed by a strong reversal
+
+    Args:
+        bars:  Intraday OHLCV DataFrame.
+        daily: Daily OHLCV DataFrame.
+
+    Returns:
+        :class:`Confirmation` or ``None``.
+    """
+    df = bars if (bars is not None and len(bars) >= 10) else daily
+    if df is None or len(df) < 10:
+        return None
+
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(df.columns):
+        return None
+
+    last = df.iloc[-1]
+    prior = df.iloc[-11:-1]
+
+    swing_low = float(prior["low"].min())
+    swing_high = float(prior["high"].max())
+
+    last_low = float(last["low"])
+    last_high = float(last["high"])
+    last_close = float(last["close"])
+    last_open = float(last["open"])
+
+    # Bullish sweep: wick below swing low but closed above it (stop hunt + reversal)
+    if last_low < swing_low and last_close > swing_low:
+        wick_size = swing_low - last_low
+        body_size = abs(last_close - last_open)
+        if wick_size > 0 and body_size > 0:
+            return Confirmation(
+                name="Liquidity Sweep (Bullish)",
+                category="liquidity_sweep",
+                detail=f"Wick to ${last_low:.2f} below swing low ${swing_low:.2f}, recovered ${last_close:.2f}",
+                confidence=73.0,
+            )
+
+    # Bearish sweep: wick above swing high but closed below it
+    if last_high > swing_high and last_close < swing_high:
+        wick_size = last_high - swing_high
+        body_size = abs(last_close - last_open)
+        if wick_size > 0 and body_size > 0:
+            return Confirmation(
+                name="Liquidity Sweep (Bearish)",
+                category="liquidity_sweep",
+                detail=f"Wick to ${last_high:.2f} above swing high ${swing_high:.2f}, reversed ${last_close:.2f}",
+                confidence=73.0,
+            )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Fake breakout detection (filter)
+# ---------------------------------------------------------------------------
+
+def _is_fake_breakout(
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+) -> bool:
+    """Return ``True`` if the latest move shows signs of a fake breakout.
+
+    A breakout is considered fake if any of:
+    - Volume on the break candle is below the 20-bar average
+    - The break candle has a large wick (wick > 50 % of total range)
+    - RSI divergence: price made a new high/low but RSI did not confirm
+
+    If ``True``, no signal should be sent regardless of confirmation count.
+
+    Args:
+        bars:  Intraday OHLCV DataFrame.
+        daily: Daily OHLCV DataFrame.
+
+    Returns:
+        ``True`` if the breakout appears to be fake.
+    """
+    df = bars if (bars is not None and len(bars) >= 5) else daily
+    if df is None or len(df) < 5:
+        return False  # insufficient data – do not suppress
+
+    required = {"open", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        return False
+
+    last = df.iloc[-1]
+    last_open = float(last["open"])
+    last_close = float(last["close"])
+    last_high = float(last["high"])
+    last_low = float(last["low"])
+    last_vol = float(last["volume"])
+
+    total_range = last_high - last_low
+    if total_range <= 0:
+        return False
+
+    # --- Check 1: volume below average ---
+    avg_vol = float(df["volume"].iloc[-21:-1].mean()) if len(df) > 1 else 0.0
+    if avg_vol > 0 and last_vol < avg_vol:
+        logger.debug("Fake breakout: volume below average (%.0f < %.0f)", last_vol, avg_vol)
+        return True
+
+    # --- Check 2: large wick (> 50% of candle range) ---
+    body = abs(last_close - last_open)
+    wick = total_range - body
+    if wick / total_range > 0.50:
+        logger.debug("Fake breakout: large wick ratio %.2f", wick / total_range)
+        return True
+
+    # --- Check 3: RSI divergence against breakout direction ---
+    if len(df) >= 14 and "close" in df.columns:
+        closes = df["close"]
+        delta = closes.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = gain / loss.replace(0, float("nan"))
+        rsi_series = 100 - (100 / (1 + rs))
+        if len(rsi_series) >= 2:
+            rsi_now = float(rsi_series.iloc[-1])
+            rsi_prev = float(rsi_series.iloc[-2])
+            if not math.isnan(rsi_now) and not math.isnan(rsi_prev):
+                price_up = last_close > float(closes.iloc[-2])
+                rsi_up = rsi_now > rsi_prev
+                # Price moved up but RSI moved down → bearish divergence (fake bull break)
+                # Price moved down but RSI moved up → bullish divergence (fake bear break)
+                if price_up != rsi_up:
+                    logger.debug(
+                        "Fake breakout: RSI divergence (price_up=%s, rsi_up=%s)",
+                        price_up, rsi_up,
+                    )
+                    return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Supply & demand zone confirmation
 # ---------------------------------------------------------------------------
 
@@ -437,14 +747,23 @@ def evaluate(
 ) -> SignalResult:
     """Run all confirmation checks and return a :class:`SignalResult`.
 
-    A signal is actionable only when at least **2 confirmations** align.
+    A signal is actionable only when at least **3 confirmations** align and
+    no fake-breakout conditions are detected.
 
     Confirmations checked:
-    1. Volume   – RVOL or daily volume spike
-    2. Pattern  – 20-day breakout / double bottom / support bounce
-    3. Candlestick – engulfing / hammer / shooting star
-    4. Options  – call/put flow spike or gamma flip
-    5. S&D Zone – price near an institutional supply/demand zone
+    1. Volume       – RVOL or daily volume spike
+    2. Pattern      – 20-day breakout / double bottom / support bounce
+    3. Candlestick  – engulfing / hammer / shooting star
+    4. Options      – call/put flow spike or gamma flip
+    5. S&D Zone     – price near an institutional supply/demand zone
+    6. HTF Trend    – daily price > EMA21 > EMA50 (higher-timeframe bias)
+    7. Momentum     – RSI in bullish zone with positive MACD histogram
+    8. Retest       – price returning to a recently broken key level
+    9. Liquidity Sweep – stop hunt + reversal pattern
+
+    Fake breakout guard: if the latest candle shows low volume, a dominant
+    wick, or RSI divergence, the signal is suppressed regardless of the
+    confirmation count.
 
     Probability scoring added to result:
     - ``confidence_score``: weighted probability % (0–100)
@@ -461,14 +780,21 @@ def evaluate(
     Returns:
         :class:`SignalResult` with priority and confirmation list.
     """
+    # --- Fake breakout guard (applied before any confirmations) ---
+    fake_break = _is_fake_breakout(bars, daily)
+
     confirmations: List[Confirmation] = []
 
     checkers = [
-        ("volume",       lambda: _check_volume(bars, daily)),
-        ("pattern",      lambda: _check_pattern(daily)),
-        ("candlestick",  lambda: _check_candlestick(bars, daily)),
-        ("options",      lambda: _check_options(options)),
-        ("supply_demand", lambda: _check_supply_demand(ticker, bars, daily)),
+        ("volume",          lambda: _check_volume(bars, daily)),
+        ("pattern",         lambda: _check_pattern(daily)),
+        ("candlestick",     lambda: _check_candlestick(bars, daily)),
+        ("options",         lambda: _check_options(options)),
+        ("supply_demand",   lambda: _check_supply_demand(ticker, bars, daily)),
+        ("htf_trend",       lambda: _check_htf_trend(daily)),
+        ("momentum",        lambda: _check_momentum(bars, daily)),
+        ("retest",          lambda: _check_retest(daily)),
+        ("liquidity_sweep", lambda: _check_liquidity_sweep(bars, daily)),
     ]
 
     for category, checker in checkers:
@@ -480,12 +806,14 @@ def evaluate(
             logger.debug("Confirmation check '%s' failed for %s: %s", category, ticker, exc)
 
     n = len(confirmations)
-    if n >= 3:
-        priority = "HIGH_CONFIDENCE"
-    elif n >= 2:
-        priority = "ALERT"
-    else:
+
+    # Require at least 3 confirmations; also reject fake breakouts
+    if fake_break or n < 3:
         priority = "NO_SIGNAL"
+    elif n >= 4:
+        priority = "HIGH_CONFIDENCE"
+    else:
+        priority = "ALERT"
 
     confidence_pct = _compute_probability(confirmations)
     risk_grade = _risk_grade_from_confidence(confidence_pct)
@@ -508,6 +836,12 @@ def evaluate(
             n,
             confidence_pct,
             setup_strength,
+        )
+    elif fake_break and n >= 3:
+        logger.debug(
+            "Signal engine: %s suppressed – fake breakout detected (%d confirmations)",
+            ticker,
+            n,
         )
 
     return result

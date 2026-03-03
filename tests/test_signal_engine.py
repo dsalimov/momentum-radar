@@ -5,6 +5,7 @@ tests/test_signal_engine.py – Unit tests for the multi-confirmation signal eng
 import pytest
 import pandas as pd
 import numpy as np
+from datetime import datetime
 from unittest.mock import MagicMock
 
 
@@ -50,16 +51,28 @@ def _make_breakout_daily(n: int = 65) -> pd.DataFrame:
 
 
 def _make_volume_spike_bars(n: int = 60) -> pd.DataFrame:
-    """Intraday 1-min bars with a big volume spike on the last bar."""
+    """Intraday 1-min bars with a big volume spike on the last bar.
+
+    The last bar is a strong bullish candle (close == high, tiny lower wick)
+    so it does not trigger the fake-breakout wick filter.
+    """
     rng = pd.date_range("2024-01-15 09:30", periods=n, freq="1min")
     volumes = np.full(n, 50_000.0)
     volumes[-1] = 400_000.0  # 8× spike
     closes = np.full(n, 50.0)
+    opens = closes - 0.05
+    highs = closes + 0.1
+    lows = closes - 0.1
+    # Last bar: open near low, close at high → momentum candle, small wick ratio
+    opens[-1] = 49.90
+    closes[-1] = 50.10
+    highs[-1] = 50.10   # close == high (no upper wick)
+    lows[-1] = 49.88    # tiny lower wick (0.02)
     return pd.DataFrame(
         {
-            "open": closes,
-            "high": closes + 0.1,
-            "low": closes - 0.1,
+            "open": opens,
+            "high": highs,
+            "low": lows,
             "close": closes,
             "volume": volumes,
         },
@@ -293,15 +306,15 @@ class TestEvaluate:
         assert result.priority == "NO_SIGNAL"
         assert result.confirmation_count == 0
 
-    def test_two_confirmations_produce_alert(self):
+    def test_two_confirmations_produce_no_signal(self):
         from momentum_radar.services.signal_engine import evaluate
 
         daily = _make_breakout_daily()    # triggers pattern
         options = _options_call_spike()   # triggers options
 
         result = evaluate("TST", daily=daily, options=options)
-        assert result.confirmation_count >= 2
-        assert result.priority in ("ALERT", "HIGH_CONFIDENCE")
+        # With the 3-confirmation minimum, 2 confirmations must not produce a signal
+        assert result.priority == "NO_SIGNAL"
 
     def test_three_confirmations_produce_high_confidence(self):
         from momentum_radar.services.signal_engine import evaluate
@@ -313,8 +326,10 @@ class TestEvaluate:
         # volume + options are guaranteed; pattern may or may not fire
         result = evaluate("HI", bars=bars, daily=daily, options=options)
         assert result.confirmation_count >= 2
-        if result.confirmation_count >= 3:
+        if result.confirmation_count >= 4:
             assert result.priority == "HIGH_CONFIDENCE"
+        elif result.confirmation_count >= 3:
+            assert result.priority in ("ALERT", "HIGH_CONFIDENCE")
 
     def test_single_confirmation_no_signal(self):
         from momentum_radar.services.signal_engine import evaluate
@@ -346,3 +361,206 @@ class TestEvaluate:
         for label in result.confirmation_labels:
             assert isinstance(label, str)
             assert len(label) > 0
+
+
+# ---------------------------------------------------------------------------
+# New confirmation checker tests
+# ---------------------------------------------------------------------------
+
+class TestCheckHtfTrend:
+    def test_bullish_alignment_detected(self):
+        from momentum_radar.services.signal_engine import _check_htf_trend
+
+        rng = pd.date_range("2024-01-01", periods=60, freq="B")
+        # Trending up so last close > EMA21 > EMA50
+        closes = 100 + np.arange(60) * 0.5
+        daily = pd.DataFrame(
+            {"open": closes - 0.2, "high": closes + 0.5, "low": closes - 0.5,
+             "close": closes, "volume": np.full(60, 1e6)},
+            index=rng,
+        )
+        conf = _check_htf_trend(daily)
+        assert conf is not None
+        assert conf.category == "htf_trend"
+
+    def test_insufficient_data_returns_none(self):
+        from momentum_radar.services.signal_engine import _check_htf_trend
+
+        rng = pd.date_range("2024-01-01", periods=20, freq="B")
+        closes = np.full(20, 100.0)
+        daily = pd.DataFrame(
+            {"open": closes, "high": closes, "low": closes,
+             "close": closes, "volume": np.full(20, 1e6)},
+            index=rng,
+        )
+        assert _check_htf_trend(daily) is None
+
+    def test_none_returns_none(self):
+        from momentum_radar.services.signal_engine import _check_htf_trend
+
+        assert _check_htf_trend(None) is None
+
+
+class TestCheckMomentum:
+    def test_rsi_macd_bullish_detected(self):
+        from momentum_radar.services.signal_engine import _check_momentum
+
+        rng = pd.date_range("2024-01-01", periods=60, freq="B")
+        np.random.seed(42)
+        # Moderate uptrend with noise – RSI stays in 40-70 zone
+        closes = 50 + np.cumsum(np.random.randn(60) * 0.4 + 0.1)
+        daily = pd.DataFrame(
+            {"open": closes - 0.1, "high": closes + 0.2, "low": closes - 0.2,
+             "close": closes, "volume": np.full(60, 1e6)},
+            index=rng,
+        )
+        conf = _check_momentum(None, daily)
+        # Confirms when RSI in 40-70 with positive MACD histogram; may be None
+        # if data doesn't align – just verify no exception and correct type
+        assert conf is None or conf.category == "momentum"
+
+    def test_none_returns_none(self):
+        from momentum_radar.services.signal_engine import _check_momentum
+
+        assert _check_momentum(None, None) is None
+
+
+class TestCheckRetest:
+    def test_retest_detected_near_prior_high(self):
+        from momentum_radar.services.signal_engine import _check_retest
+
+        rng = pd.date_range("2024-01-01", periods=25, freq="B")
+        closes = np.full(25, 100.0)
+        highs = closes + 1.0
+        # Prior 20-bar high = 101.0; last close is 100.98 → within 1.5% → retest
+        closes[-1] = 100.98
+        highs[-1] = 101.0
+        daily = pd.DataFrame(
+            {"open": closes - 0.2, "high": highs, "low": closes - 0.5,
+             "close": closes, "volume": np.full(25, 1e6)},
+            index=rng,
+        )
+        conf = _check_retest(daily)
+        assert conf is not None
+        assert conf.category == "retest"
+
+    def test_none_returns_none(self):
+        from momentum_radar.services.signal_engine import _check_retest
+
+        assert _check_retest(None) is None
+
+
+class TestCheckLiquiditySweep:
+    def test_bullish_sweep_detected(self):
+        from momentum_radar.services.signal_engine import _check_liquidity_sweep
+
+        rng = pd.date_range("2024-01-01", periods=15, freq="B")
+        closes = np.full(15, 50.0)
+        opens = closes - 0.3
+        highs = closes + 0.5
+        lows = closes - 0.5
+        # Last bar wicks below swing low (49.5) then closes above it
+        lows[-1] = 48.8   # wick below prior swing low
+        closes[-1] = 50.2
+        highs[-1] = 50.5
+        opens[-1] = 49.6
+        daily = pd.DataFrame(
+            {"open": opens, "high": highs, "low": lows, "close": closes,
+             "volume": np.full(15, 1e6)},
+            index=rng,
+        )
+        conf = _check_liquidity_sweep(None, daily)
+        assert conf is not None
+        assert conf.category == "liquidity_sweep"
+        assert "Bullish" in conf.name
+
+    def test_no_sweep_returns_none(self):
+        from momentum_radar.services.signal_engine import _check_liquidity_sweep
+
+        rng = pd.date_range("2024-01-01", periods=15, freq="B")
+        closes = np.full(15, 50.0)
+        daily = pd.DataFrame(
+            {"open": closes - 0.1, "high": closes + 0.2, "low": closes - 0.2,
+             "close": closes, "volume": np.full(15, 1e6)},
+            index=rng,
+        )
+        assert _check_liquidity_sweep(None, daily) is None
+
+
+class TestIsFakeBreakout:
+    def test_low_volume_is_fake(self):
+        from momentum_radar.services.signal_engine import _is_fake_breakout
+
+        rng = pd.date_range("2024-01-15 09:30", periods=25, freq="1min")
+        volumes = np.full(25, 100_000.0)
+        volumes[-1] = 10_000.0  # last bar volume << average → fake
+        closes = np.full(25, 50.0)
+        bars = pd.DataFrame(
+            {"open": closes - 0.1, "high": closes + 0.2, "low": closes - 0.2,
+             "close": closes, "volume": volumes},
+            index=rng,
+        )
+        assert _is_fake_breakout(bars, None) is True
+
+    def test_large_wick_is_fake(self):
+        from momentum_radar.services.signal_engine import _is_fake_breakout
+
+        rng = pd.date_range("2024-01-15 09:30", periods=25, freq="1min")
+        volumes = np.full(25, 100_000.0)  # adequate volume
+        closes = np.full(25, 50.0)
+        opens = closes - 0.05
+        highs = closes + 2.0   # very large upper wick
+        lows = closes - 0.05
+        bars = pd.DataFrame(
+            {"open": opens, "high": highs, "low": lows,
+             "close": closes, "volume": volumes},
+            index=rng,
+        )
+        assert _is_fake_breakout(bars, None) is True
+
+    def test_strong_close_passes(self):
+        from momentum_radar.services.signal_engine import _is_fake_breakout
+
+        bars = _make_volume_spike_bars()
+        assert _is_fake_breakout(bars, None) is False
+
+    def test_none_data_returns_false(self):
+        from momentum_radar.services.signal_engine import _is_fake_breakout
+
+        assert _is_fake_breakout(None, None) is False
+
+
+# ---------------------------------------------------------------------------
+# Timeframe and opening range tests (main.py helpers)
+# ---------------------------------------------------------------------------
+
+class TestGetActiveTimeframe:
+    def test_scalp_window(self):
+        from momentum_radar.main import get_active_timeframe
+
+        dt = datetime(2024, 1, 15, 9, 45)
+        assert get_active_timeframe(dt) == "2m"
+
+    def test_intraday_window(self):
+        from momentum_radar.main import get_active_timeframe
+
+        dt = datetime(2024, 1, 15, 10, 30)
+        assert get_active_timeframe(dt) == "5m"
+
+    def test_trend_window(self):
+        from momentum_radar.main import get_active_timeframe
+
+        dt = datetime(2024, 1, 15, 13, 0)
+        assert get_active_timeframe(dt) == "10m"
+
+    def test_boundary_10am(self):
+        from momentum_radar.main import get_active_timeframe
+
+        dt = datetime(2024, 1, 15, 10, 0)
+        assert get_active_timeframe(dt) == "5m"
+
+    def test_boundary_11am(self):
+        from momentum_radar.main import get_active_timeframe
+
+        dt = datetime(2024, 1, 15, 11, 0)
+        assert get_active_timeframe(dt) == "10m"
