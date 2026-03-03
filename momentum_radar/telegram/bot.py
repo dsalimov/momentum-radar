@@ -98,6 +98,8 @@ _HELP_TEXT = (
     "  /alerts on     - Enable hourly squeeze + signal alerts\n"
     "  /alerts off    - Disable automated alerts\n"
     "  /alerts status - Show your current alert preference\n\n"
+    "Market Heatmap:\n"
+    "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
     "Use /status to check bot health."
 )
 
@@ -199,6 +201,8 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         elif text_lower.startswith("news "):
             ticker = text[len("news "):].strip().upper()
             await _news_handler_impl(update, context, ticker)
+        elif text_lower == "heatmap":
+            await _heatmap_handler_impl(update, context)
         elif text_lower == "marketnews":
             await _marketnews_handler_impl(update, context)
         elif text_lower.startswith("fundamentals "):
@@ -271,6 +275,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _tradingview_handler_impl(update, context, ticker)
+
+    async def _heatmap_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _heatmap_handler_impl(update, context)
 
     async def _alerts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _alerts_handler_impl(update, context)
@@ -1085,6 +1092,37 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         msg = _safe_text(report)
         await update.message.reply_text(msg)
 
+    async def _heatmap_handler_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Generate and send a market sector heatmap."""
+        await update.message.reply_text("📊 Generating market sector heatmap… please wait.")
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.utils.heatmap import generate_market_heatmap
+            chart_path, text_summary = await loop.run_in_executor(None, generate_market_heatmap)
+            if chart_path:
+                try:
+                    with open(chart_path, "rb") as photo:
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo,
+                            caption=text_summary[:1024],
+                        )
+                except Exception:
+                    await update.message.reply_text(text_summary)
+                finally:
+                    try:
+                        import os
+                        os.remove(chart_path)
+                    except OSError:
+                        pass
+            else:
+                await update.message.reply_text(text_summary)
+        except Exception as exc:
+            logger.error("Heatmap generation error: %s", exc)
+            await update.message.reply_text(f"⚠️ Failed to generate heatmap: {exc}")
+
     async def _run_scan(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
@@ -1176,6 +1214,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("earnings", _earnings_handler))
     app.add_handler(CommandHandler("tradingview", _tradingview_handler))
     app.add_handler(CommandHandler("alerts", _alerts_handler))
+    app.add_handler(CommandHandler("heatmap", _heatmap_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
     )

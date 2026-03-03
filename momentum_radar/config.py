@@ -161,6 +161,29 @@ class MarketHoursConfig:
 
 
 @dataclass
+class PaperTradingConfig:
+    """Paper trading and backtesting configuration."""
+
+    enabled: bool = field(default_factory=lambda: _str("PAPER_TRADING", "false").lower() == "true")
+    initial_capital: float = field(default_factory=lambda: _float("PAPER_CAPITAL", 100_000.0))
+    max_position_size_pct: float = field(
+        default_factory=lambda: _float("MAX_POSITION_SIZE_PCT", 0.10)
+    )
+    max_daily_loss_pct: float = field(
+        default_factory=lambda: _float("MAX_DAILY_LOSS_PCT", 0.02)
+    )
+    risk_per_trade_pct: float = field(
+        default_factory=lambda: _float("RISK_PER_TRADE_PCT", 0.01)
+    )
+    min_rr_ratio: float = field(
+        default_factory=lambda: _float("MIN_RR_RATIO", 2.0)
+    )
+    confidence_threshold: float = field(
+        default_factory=lambda: _float("CONFIDENCE_THRESHOLD", 60.0)
+    )
+
+
+@dataclass
 class AppConfig:
     """Top-level application configuration."""
 
@@ -172,6 +195,7 @@ class AppConfig:
     scan: ScanConfig = field(default_factory=ScanConfig)
     universe: UniverseConfig = field(default_factory=UniverseConfig)
     market_hours: MarketHoursConfig = field(default_factory=MarketHoursConfig)
+    paper_trading: PaperTradingConfig = field(default_factory=PaperTradingConfig)
 
 
 # Singleton config instance used throughout the application

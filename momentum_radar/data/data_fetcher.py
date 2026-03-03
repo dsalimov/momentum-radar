@@ -516,10 +516,12 @@ def get_data_fetcher(provider: str = "finnhub") -> BaseDataFetcher:
     Raises:
         ValueError: If the requested provider is not supported.
     """
+    from momentum_radar.data.ibkr_fetcher import IBKRDataFetcher  # noqa: PLC0415
     providers: Dict[str, type] = {
         "finnhub": HybridDataFetcher,
         "yfinance": YFinanceDataFetcher,
         "finnhub_paid": FinnhubDataFetcher,
+        "ibkr": IBKRDataFetcher,
     }
     if provider not in providers:
         raise ValueError(
