@@ -105,3 +105,73 @@ def compute_rvol(
         return None
     current_vol = float(bars["volume"].sum())
     return current_vol / avg_daily
+
+
+def compute_ema(series: pd.Series, period: int) -> Optional[pd.Series]:
+    """Compute Exponential Moving Average."""
+    if series is None or len(series) < period:
+        return None
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
+    """Compute RSI (Relative Strength Index) for the most recent bar."""
+    if closes is None or len(closes) < period + 1:
+        return None
+    delta = closes.diff().dropna()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
+    avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    val = float(rsi.iloc[-1])
+    return val if not pd.isna(val) else None
+
+
+def compute_macd(
+    closes: pd.Series,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+) -> Optional[dict]:
+    """Compute MACD line, signal line, and histogram.
+
+    Returns dict with keys ``macd``, ``signal``, ``histogram``, or ``None``
+    if there is insufficient data.
+    """
+    if closes is None or len(closes) < slow + signal:
+        return None
+    ema_fast = closes.ewm(span=fast, adjust=False).mean()
+    ema_slow = closes.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return {
+        "macd": float(macd_line.iloc[-1]),
+        "signal": float(signal_line.iloc[-1]),
+        "histogram": float(histogram.iloc[-1]),
+    }
+
+
+def compute_bollinger_bands(
+    closes: pd.Series,
+    period: int = 20,
+    num_std: float = 2.0,
+) -> Optional[dict]:
+    """Compute Bollinger Bands (upper, middle, lower).
+
+    Returns dict with keys ``upper``, ``middle``, ``lower``, or ``None``
+    if there is insufficient data.
+    """
+    if closes is None or len(closes) < period:
+        return None
+    middle = closes.rolling(period).mean()
+    std = closes.rolling(period).std()
+    upper = middle + num_std * std
+    lower = middle - num_std * std
+    return {
+        "upper": float(upper.iloc[-1]),
+        "middle": float(middle.iloc[-1]),
+        "lower": float(lower.iloc[-1]),
+    }
