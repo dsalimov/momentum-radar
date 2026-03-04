@@ -32,13 +32,13 @@ def get_demand_zones(
         ticker:    Stock symbol.
         daily:     Daily OHLCV DataFrame.
         min_score: Minimum zone strength score to include (0–100).
-        timeframe: Timeframe label passed to the zone detector.
+        timeframe: Reserved for future multi-timeframe support (currently unused).
 
     Returns:
         List of :class:`~momentum_radar.signals.supply_demand.SupplyDemandZone`.
     """
-    zones = detect_zones(ticker, daily, timeframe=timeframe)
-    return [z for z in zones if z.zone_type == "demand" and z.strength_score >= min_score]
+    zones = detect_zones(ticker, daily, min_score=min_score)
+    return [z for z in zones if z.zone_type == "demand"]
 
 
 def get_supply_zones(
@@ -53,13 +53,13 @@ def get_supply_zones(
         ticker:    Stock symbol.
         daily:     Daily OHLCV DataFrame.
         min_score: Minimum zone strength score to include (0–100).
-        timeframe: Timeframe label passed to the zone detector.
+        timeframe: Reserved for future multi-timeframe support (currently unused).
 
     Returns:
         List of :class:`~momentum_radar.signals.supply_demand.SupplyDemandZone`.
     """
-    zones = detect_zones(ticker, daily, timeframe=timeframe)
-    return [z for z in zones if z.zone_type == "supply" and z.strength_score >= min_score]
+    zones = detect_zones(ticker, daily, min_score=min_score)
+    return [z for z in zones if z.zone_type == "supply"]
 
 
 def price_in_zone(
