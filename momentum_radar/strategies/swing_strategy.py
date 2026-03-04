@@ -100,7 +100,7 @@ def _check_volume(daily: Optional[pd.DataFrame]) -> Optional[str]:
         return None
     avg  = float(daily["volume"].iloc[-32:-1].mean())
     last = float(daily["volume"].iloc[-1])
-    if avg > 0 and last >= avg * 1.0:
+    if avg > 0 and last >= avg * 1.2:
         return f"Volume Expansion ({last / avg:.1f}x)"
     return None
 

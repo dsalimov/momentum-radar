@@ -38,6 +38,9 @@ _COLOR_TARGET = "#2980B9"   # blue
 _COLOR_ZONE   = "#8E44AD"   # purple (S&D zones)
 _COLOR_BG     = "#1a1a2e"   # dark background
 
+# Number of bars shown in the generated chart (keeps the image clean and fast)
+_MAX_CHART_BARS: int = 60
+
 
 def _build_output_path(ticker: str, timeframe: str) -> str:
     """Build a timestamped file path in the system temp directory."""
@@ -86,8 +89,8 @@ def render_signal_chart(
 
     path = output_path or _build_output_path(signal.ticker, signal.timeframe)
 
-    # Slice to last 60 bars
-    plot_df = df.iloc[-60:].copy() if len(df) > 60 else df.copy()
+    # Slice to last _MAX_CHART_BARS bars for a clean, readable chart
+    plot_df = df.iloc[-_MAX_CHART_BARS:].copy() if len(df) > _MAX_CHART_BARS else df.copy()
 
     # Ensure required columns
     for col in ("open", "high", "low", "close", "volume"):

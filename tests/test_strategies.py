@@ -128,7 +128,7 @@ class TestScalpStrategy:
         from momentum_radar.strategies.scalp_strategy import evaluate
 
         result = evaluate("TEST")
-        assert result.timeframe in ("2m", "5m", "10m", "15m", "daily")
+        assert result.timeframe in ("2m", "5m")
 
     def test_entry_stop_target_populated_when_data_given(self):
         from momentum_radar.strategies.scalp_strategy import evaluate

@@ -77,7 +77,7 @@ _SESSION_NAMES: Dict[str, str] = {
     "midday":    "Midday",
     "afternoon": "Afternoon Trend",
     "premarket": "Pre-Market",
-    "afterhours":"After Hours",
+    "afterhours": "After Hours",
 }
 
 
