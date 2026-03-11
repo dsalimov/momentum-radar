@@ -76,12 +76,15 @@ MOMENTUM_IGNITION_CANDLES: int = 3
 class SetupType(Enum):
     """Named setup categories in descending priority."""
 
+    GOLDEN_SWEEP = "Golden Sweep"
     LIQUIDITY_SWEEP = "Liquidity Sweep"
     OPENING_RANGE_BREAKOUT = "Opening Range Breakout"
     VWAP_RECLAIM = "VWAP Reclaim"
     VWAP_BREAKDOWN = "VWAP Breakdown"
     SUPPORT_BOUNCE = "Support Bounce"
     MOMENTUM_IGNITION = "Momentum Ignition"
+    GOLDEN_SWEEP = "Golden Sweep"
+    CHART_PATTERN_BREAKOUT = "Chart Pattern Breakout"
 
 
 class SetupDirection(Enum):
@@ -97,7 +100,7 @@ class TradeSetup:
 
     Attributes:
         ticker:       Stock symbol.
-        setup_type:   One of the six :class:`SetupType` values.
+        setup_type:   One of the :class:`SetupType` values.
         direction:    ``LONG`` or ``SHORT``.
         entry:        Suggested entry price.
         stop:         Stop-loss price.

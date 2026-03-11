@@ -46,6 +46,7 @@ import momentum_radar.signals.volatility  # noqa: F401
 import momentum_radar.signals.structure  # noqa: F401
 import momentum_radar.signals.short_interest  # noqa: F401
 import momentum_radar.signals.options_flow  # noqa: F401
+import momentum_radar.signals.golden_sweep  # noqa: F401
 import momentum_radar.signals.trend  # noqa: F401
 import momentum_radar.signals.vwap_signal  # noqa: F401
 import momentum_radar.signals.support_resistance  # noqa: F401
