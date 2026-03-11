@@ -158,7 +158,8 @@ def _recent_avg_volume(bars: pd.DataFrame, lookback: int = 20) -> float:
     """Mean volume of the last *lookback* bars (excluding current)."""
     if "volume" not in bars.columns or len(bars) < 2:
         return 0.0
-    return float(bars["volume"].iloc[-lookback - 1: -1].mean())
+    # Exclude the current (last) bar so the average represents "prior" volume.
+    return float(bars["volume"].iloc[-lookback - 1:-1].mean())
 
 
 def _volume_spike_mult(bars: pd.DataFrame, lookback: int = 20) -> float:
@@ -365,8 +366,11 @@ def detect_golden_sweep(
 
     risk = abs(entry - stop)
     reward = abs(target - entry)
-    if risk <= 0 or reward / risk < MIN_RISK_REWARD:
-        logger.debug("%s – Golden Sweep skipped: R:R %.1f < %.1f", ticker, reward / risk if risk > 0 else 0, MIN_RISK_REWARD)
+    if risk <= 0:
+        logger.debug("%s – Golden Sweep skipped: zero risk (entry == stop)", ticker)
+        return None
+    if reward / risk < MIN_RISK_REWARD:
+        logger.debug("%s – Golden Sweep skipped: R:R %.1f < %.1f", ticker, reward / risk, MIN_RISK_REWARD)
         return None
 
     # Sweep classification

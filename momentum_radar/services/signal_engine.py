@@ -40,6 +40,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from momentum_radar.config import config as _signal_engine_config
+
 logger = logging.getLogger(__name__)
 
 # Lookback window used when searching for the second trough in a double-bottom pattern
@@ -273,9 +275,8 @@ def _check_options(options: Optional[Dict]) -> Optional[Confirmation]:
     # --- Golden Sweep check (highest priority) ---
     call_sweeps = options.get("call_sweeps") or []
     put_sweeps = options.get("put_sweeps") or []
-    from momentum_radar.config import config as _cfg
 
-    min_contracts = _cfg.signals.golden_sweep_min_contracts
+    min_contracts = _signal_engine_config.signals.golden_sweep_min_contracts
     top_call_sweep = next(
         (s for s in call_sweeps if int(s.get("volume", 0)) >= min_contracts),
         None,

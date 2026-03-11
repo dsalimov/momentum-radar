@@ -500,6 +500,13 @@ class TestFormatGoldenSweepAlert:
         msg = format_golden_sweep_alert(setup)
         assert "12:45 PM EST" in msg
 
+    def test_default_timestamp_used_when_none(self):
+        """format_golden_sweep_alert uses the setup's timestamp when no override is given."""
+        ts = datetime(2024, 6, 20, 10, 30, 0)
+        setup = self._make_setup(timestamp=ts)
+        msg = format_golden_sweep_alert(setup)
+        assert "10:30 AM EST" in msg
+
     def test_alert_bearish_put_setup(self):
         setup = self._make_setup(
             direction="Bearish",
