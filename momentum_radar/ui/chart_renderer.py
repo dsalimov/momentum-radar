@@ -15,6 +15,13 @@ Chart style
 File naming: ``{SYMBOL}_{TIMEFRAME}_{TIMESTAMP}.png``
 
 Minimal indicator overlay – no RSI / MACD clutter.
+
+Functions
+---------
+* :func:`render_signal_chart`      – chart for a legacy :class:`StrategySignal`.
+* :func:`render_trade_setup_chart` – chart for a :class:`TradeSetup` (new setup
+  detector); includes entry, stop, target markers and a VWAP overlay.
+* :func:`render_pattern_chart`     – chart annotated with a breakout level.
 """
 
 from __future__ import annotations
@@ -221,3 +228,134 @@ def render_pattern_chart(
             valid=signal.valid,
         )
     return render_signal_chart(signal, df, output_path=output_path)
+
+
+def render_trade_setup_chart(
+    setup,
+    df: pd.DataFrame,
+    output_path: Optional[str] = None,
+) -> str:
+    """Generate a dark-theme annotated chart for a :class:`TradeSetup`.
+
+    Draws candlestick price bars with:
+
+    * Green horizontal line  – entry price
+    * Red horizontal line    – stop-loss price
+    * Blue horizontal line   – profit target price
+    * Orange dashed line     – VWAP overlay (computed from *df* if available)
+    * Volume bars in lower panel
+
+    Args:
+        setup:       :class:`~momentum_radar.signals.setup_detector.TradeSetup`
+                     object from the setup detector.
+        df:          Intraday OHLCV DataFrame (1-min or active timeframe).
+        output_path: Optional path to save the PNG.  A timestamped temp file
+                     is used when ``None``.
+
+    Returns:
+        Absolute path to the generated PNG file.
+
+    Raises:
+        ImportError: If *mplfinance* or *matplotlib* is not installed.
+        ValueError:  If *df* is empty.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import mplfinance as mpf
+    except ImportError as exc:
+        raise ImportError(
+            "mplfinance and matplotlib are required for chart rendering. "
+            "Install with: pip install mplfinance matplotlib"
+        ) from exc
+
+    if df is None or df.empty:
+        raise ValueError("DataFrame is empty – cannot render trade-setup chart")
+
+    timeframe = "intraday"
+    path = output_path or _build_output_path(setup.ticker, timeframe)
+
+    # Limit to last _MAX_CHART_BARS bars
+    plot_df = df.iloc[-_MAX_CHART_BARS:].copy() if len(df) > _MAX_CHART_BARS else df.copy()
+
+    for col in ("open", "high", "low", "close", "volume"):
+        if col not in plot_df.columns:
+            raise ValueError(f"Missing required column: {col}")
+
+    # Compute VWAP overlay
+    add_plots = []
+    try:
+        from momentum_radar.utils.indicators import compute_vwap
+        typical = (plot_df["high"] + plot_df["low"] + plot_df["close"]) / 3
+        cum_vol = plot_df["volume"].cumsum()
+        cum_tp_vol = (typical * plot_df["volume"]).cumsum()
+        vwap_series = cum_tp_vol / cum_vol.replace(0, float("nan"))
+        add_plots.append(
+            mpf.make_addplot(
+                vwap_series,
+                color="#F39C12",   # orange
+                linestyle="--",
+                width=1.5,
+                label="VWAP",
+            )
+        )
+    except Exception:
+        pass  # VWAP overlay is optional
+
+    # Horizontal level lines: entry (green), stop (red), target (blue)
+    level_prices = []
+    level_colors = []
+    for price, color in [
+        (setup.entry,  _COLOR_ENTRY),
+        (setup.stop,   _COLOR_STOP),
+        (setup.target, _COLOR_TARGET),
+    ]:
+        if price > 0:
+            level_prices.append(price)
+            level_colors.append(color)
+
+    mc = mpf.make_marketcolors(
+        up="#27AE60",
+        down="#E74C3C",
+        edge="inherit",
+        wick={"up": "#27AE60", "down": "#E74C3C"},
+        volume={"up": "#1A6634", "down": "#7B1E1E"},
+    )
+    style = mpf.make_mpf_style(
+        marketcolors=mc,
+        facecolor=_COLOR_BG,
+        gridcolor="#2d2d4e",
+        gridstyle="--",
+        gridaxis="both",
+    )
+
+    title = (
+        f"{setup.ticker}  |  {setup.setup_type.value}  |  {setup.direction.value}"
+        f"  |  RR 1:{setup.risk_reward:.1f}  |  RVOL {setup.rvol:.1f}x"
+        f"  |  Confidence: {setup.confidence}"
+    )
+
+    hlines_arg = (
+        dict(hlines=level_prices, colors=level_colors, linestyle="-", linewidths=1.5)
+        if level_prices else None
+    )
+
+    fig, axes = mpf.plot(
+        plot_df,
+        type="candle",
+        style=style,
+        title=title,
+        ylabel="Price",
+        volume=True,
+        addplot=add_plots if add_plots else None,
+        hlines=hlines_arg,
+        figsize=(14, 8),
+        returnfig=True,
+        tight_layout=True,
+    )
+
+    fig.savefig(path, dpi=100, bbox_inches="tight", facecolor=_COLOR_BG)
+    plt.close(fig)
+    logger.info("Trade-setup chart saved: %s", path)
+    return path
