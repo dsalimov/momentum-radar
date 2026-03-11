@@ -53,7 +53,10 @@ import momentum_radar.signals.squeeze  # noqa: F401
 import momentum_radar.signals.supply_demand  # noqa: F401
 
 from momentum_radar.signals.scoring import compute_score, AlertLevel
+from momentum_radar.signals.setup_detector import detect_setups
 from momentum_radar.alerts.formatter import format_alert
+from momentum_radar.alerts.trade_formatter import format_trade_setup
+from momentum_radar.alerts.discord_alert import send_discord_alert
 from momentum_radar.alerts.telegram_alert import send_telegram_alert
 from momentum_radar.storage.database import init_db, save_alert
 from momentum_radar.storage.logger import log_alert_csv
@@ -454,6 +457,98 @@ def _scan_ticker(
 
 
 # ---------------------------------------------------------------------------
+# Professional setup scanner (new pipeline)
+# ---------------------------------------------------------------------------
+
+#: Per-ticker cooldown for trade setup alerts (maps ticker → last alert epoch).
+_setup_alert_time: Dict[str, float] = {}
+#: Cooldown in seconds between trade setup alerts for the same ticker.
+_SETUP_COOLDOWN_SECONDS: int = 900  # 15 minutes
+
+
+def _is_setup_on_cooldown(ticker: str) -> bool:
+    """Return True if a trade-setup alert was recently sent for *ticker*."""
+    last = _setup_alert_time.get(ticker, 0.0)
+    return (time.time() - last) < _SETUP_COOLDOWN_SECONDS
+
+
+def _mark_setup_alerted(ticker: str) -> None:
+    _setup_alert_time[ticker] = time.time()
+
+
+def _scan_setups(
+    ticker: str,
+    fetcher,
+    now: Optional[datetime] = None,
+) -> None:
+    """Run the professional setup detector for *ticker* and alert on findings.
+
+    This pipeline complements the legacy scoring system.  It runs the
+    5-step trader decision model and only alerts when a high-quality setup
+    with a sufficient risk:reward ratio is confirmed.
+
+    Per-ticker cooldown of 15 minutes prevents duplicate alerts.
+
+    Args:
+        ticker:  Stock symbol.
+        fetcher: Data fetcher instance.
+        now:     Current datetime (defaults to ``datetime.now()``).
+    """
+    if now is None:
+        now = datetime.now()
+
+    if _is_setup_on_cooldown(ticker):
+        logger.debug("%s – setup scanner: on cooldown, skipping.", ticker)
+        return
+
+    try:
+        active_tf = get_active_timeframe(now)
+        bars = fetcher.get_intraday_bars(ticker, interval=active_tf, period="1d")
+        daily = fetcher.get_daily_bars(ticker, period="60d")
+
+        setups = detect_setups(ticker, bars, daily)
+        if not setups:
+            return
+
+        for setup in setups:
+            message = format_trade_setup(setup, timestamp=now)
+
+            # Console output
+            logger.info("\n%s", message)
+
+            # Telegram (best-effort)
+            send_telegram_alert(message)
+
+            # Discord placeholder (activates when DISCORD_WEBHOOK_URL is set)
+            try:
+                chart_path: Optional[str] = None
+                from momentum_radar.ui.chart_renderer import render_trade_setup_chart
+                if bars is not None and not bars.empty:
+                    chart_path = render_trade_setup_chart(setup, bars)
+            except Exception as chart_exc:
+                logger.debug("Chart generation skipped for %s: %s", ticker, chart_exc)
+                chart_path = None
+
+            send_discord_alert(message, image_path=chart_path)
+
+            logger.info(
+                "Setup alert sent: %s | %s | %s | entry=%.2f stop=%.2f target=%.2f RR=%.1f",
+                ticker,
+                setup.setup_type.value,
+                setup.direction.value,
+                setup.entry,
+                setup.stop,
+                setup.target,
+                setup.risk_reward,
+            )
+
+        _mark_setup_alerted(ticker)
+
+    except Exception as exc:
+        logger.error("Unhandled error in setup scan for %s: %s", ticker, exc, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Main scan loop
 # ---------------------------------------------------------------------------
 
@@ -519,6 +614,7 @@ async def run_scanner() -> None:
                 if _SHUTDOWN:
                     break
                 _scan_ticker(ticker, fetcher, market_penalty, market_condition, now)
+                _scan_setups(ticker, fetcher, now)
                 await asyncio.sleep(0)  # yield control to the event loop
 
             interval = config.scan.interval_seconds
