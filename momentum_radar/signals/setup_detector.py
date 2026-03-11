@@ -76,6 +76,7 @@ MOMENTUM_IGNITION_CANDLES: int = 3
 class SetupType(Enum):
     """Named setup categories in descending priority."""
 
+    GOLDEN_SWEEP = "Golden Sweep"
     LIQUIDITY_SWEEP = "Liquidity Sweep"
     OPENING_RANGE_BREAKOUT = "Opening Range Breakout"
     VWAP_RECLAIM = "VWAP Reclaim"

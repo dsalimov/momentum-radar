@@ -261,7 +261,8 @@ def _check_candlestick(
 def _check_options(options: Optional[Dict]) -> Optional[Confirmation]:
     """Return an Options confirmation if unusual call or put activity detected.
 
-    Triggers:
+    Triggers (in priority order):
+    - Golden Sweep: call_sweeps or put_sweeps with volume ≥ min contracts
     - Call volume spike (call_volume > 2× avg_call_volume)
     - Put volume spike (put_volume > 2× avg_put_volume)
     - Gamma flip: call/put ratio ≥ 2.0
@@ -269,6 +270,42 @@ def _check_options(options: Optional[Dict]) -> Optional[Confirmation]:
     if options is None:
         return None
 
+    # --- Golden Sweep check (highest priority) ---
+    call_sweeps = options.get("call_sweeps") or []
+    put_sweeps = options.get("put_sweeps") or []
+    from momentum_radar.config import config as _cfg
+
+    min_contracts = _cfg.signals.golden_sweep_min_contracts
+    top_call_sweep = next(
+        (s for s in call_sweeps if int(s.get("volume", 0)) >= min_contracts),
+        None,
+    )
+    top_put_sweep = next(
+        (s for s in put_sweeps if int(s.get("volume", 0)) >= min_contracts),
+        None,
+    )
+
+    if top_call_sweep is not None:
+        contracts = int(top_call_sweep.get("volume", 0))
+        strike = float(top_call_sweep.get("strike", 0))
+        return Confirmation(
+            name="Golden Sweep (Calls)",
+            category="options",
+            detail=f"Call sweep {contracts:,} contracts at ${strike:.0f} strike",
+            confidence=85.0,
+        )
+
+    if top_put_sweep is not None:
+        contracts = int(top_put_sweep.get("volume", 0))
+        strike = float(top_put_sweep.get("strike", 0))
+        return Confirmation(
+            name="Golden Sweep (Puts)",
+            category="options",
+            detail=f"Put sweep {contracts:,} contracts at ${strike:.0f} strike",
+            confidence=85.0,
+        )
+
+    # --- Standard volume-ratio checks ---
     call_vol = int(options.get("call_volume", 0) or 0)
     put_vol = int(options.get("put_volume", 0) or 0)
     avg_call = float(options.get("avg_call_volume", 1) or 1)

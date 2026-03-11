@@ -103,6 +103,23 @@ class SignalThresholds:
         default_factory=lambda: _float("OPTIONS_VOLUME_RATIO", 3.0)
     )
 
+    # Golden Sweep detection
+    golden_sweep_min_contracts: int = field(
+        default_factory=lambda: _int("GOLDEN_SWEEP_MIN_CONTRACTS", 500)
+    )
+    golden_sweep_volume_spike_min: float = field(
+        default_factory=lambda: _float("GOLDEN_SWEEP_VOLUME_SPIKE_MIN", 3.0)
+    )
+    golden_sweep_rvol_min: float = field(
+        default_factory=lambda: _float("GOLDEN_SWEEP_RVOL_MIN", 1.5)
+    )
+    golden_sweep_weekly_days: int = field(
+        default_factory=lambda: _int("GOLDEN_SWEEP_WEEKLY_DAYS", 7)
+    )
+    golden_sweep_swing_days: int = field(
+        default_factory=lambda: _int("GOLDEN_SWEEP_SWING_DAYS", 21)
+    )
+
     # Supply & Demand Zones
     sd_zone_min_score: float = field(
         default_factory=lambda: _float("SD_ZONE_MIN_SCORE", 50.0)
