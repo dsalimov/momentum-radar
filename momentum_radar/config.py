@@ -185,7 +185,8 @@ class ScanConfig:
         default_factory=lambda: _int("SCAN_INTERVAL", 60)
     )
     alert_cooldown_seconds: int = field(
-        default_factory=lambda: _int("ALERT_COOLDOWN", 600)
+        # 900 s = 15 minutes – no duplicate signals per ticker/setup within this window
+        default_factory=lambda: _int("ALERT_COOLDOWN", 900)
     )
 
 
