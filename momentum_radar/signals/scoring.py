@@ -96,6 +96,7 @@ _MODULE_WEIGHTS: Dict[str, int] = {
     "volume_spike":          25,  # Intraday volume spike vs. recent average
     "relative_volume":       20,  # RVOL vs. 30-day average
     "structure_break":       20,  # Break of prev-day high/low or opening range
+    "golden_sweep":          25,  # Institutional options Golden Sweep (high-conviction flow)
     "options_flow":          20,  # Unusual call/put activity (smart-money signal)
     "supply_demand_zone":    15,  # Price near an institutional supply/demand zone
     "vwap_proximity":        15,  # Price above VWAP (intraday momentum)
