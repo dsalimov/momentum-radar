@@ -83,7 +83,6 @@ class SetupType(Enum):
     VWAP_BREAKDOWN = "VWAP Breakdown"
     SUPPORT_BOUNCE = "Support Bounce"
     MOMENTUM_IGNITION = "Momentum Ignition"
-    GOLDEN_SWEEP = "Golden Sweep"
     CHART_PATTERN_BREAKOUT = "Chart Pattern Breakout"
 
 
