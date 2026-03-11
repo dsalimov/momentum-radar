@@ -48,6 +48,8 @@ _SETUP_EMOJI = {
     SetupType.VWAP_BREAKDOWN:         "📉",
     SetupType.SUPPORT_BOUNCE:         "🔄",
     SetupType.MOMENTUM_IGNITION:      "🚀",
+    SetupType.GOLDEN_SWEEP:           "⚡",
+    SetupType.CHART_PATTERN_BREAKOUT: "📐",
 }
 
 _CONFIDENCE_EMOJI = {

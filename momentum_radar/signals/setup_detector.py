@@ -82,6 +82,8 @@ class SetupType(Enum):
     VWAP_BREAKDOWN = "VWAP Breakdown"
     SUPPORT_BOUNCE = "Support Bounce"
     MOMENTUM_IGNITION = "Momentum Ignition"
+    GOLDEN_SWEEP = "Golden Sweep"
+    CHART_PATTERN_BREAKOUT = "Chart Pattern Breakout"
 
 
 class SetupDirection(Enum):
@@ -97,7 +99,7 @@ class TradeSetup:
 
     Attributes:
         ticker:       Stock symbol.
-        setup_type:   One of the six :class:`SetupType` values.
+        setup_type:   One of the :class:`SetupType` values.
         direction:    ``LONG`` or ``SHORT``.
         entry:        Suggested entry price.
         stop:         Stop-loss price.
