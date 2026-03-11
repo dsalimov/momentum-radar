@@ -65,13 +65,12 @@ _KNOWN_PATTERNS = [
     "three inside down",
 ]
 
-_HELP_TEXT = (
-    "Pattern Research Bot\n\n"
-    "Send a pattern name to scan 500+ stocks.\n\n"
-    "Available patterns:\n"
-    + "\n".join(f"  - {p}" for p in _KNOWN_PATTERNS)
-    + "\n\n"
-    "Or use /scan <pattern> - e.g. /scan double bottom\n\n"
+_START_TEXT = (
+    "Welcome to Momentum Radar!\n\n"
+    "Professional institutional-style trading scanner.\n\n"
+    "Pattern Commands:\n"
+    "  /patterns - Full list of supported chart patterns\n"
+    "  /scan <pattern> - Scan stocks for a pattern, e.g. /scan double bottom\n\n"
     "Options Commands:\n"
     "  /options AAPL - Full options summary + chart\n"
     "  /flow AAPL - Options flow analysis (smart money)\n"
@@ -108,7 +107,95 @@ _HELP_TEXT = (
     "  /alerts status - Show your current alert preference\n\n"
     "Market Heatmap:\n"
     "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
-    "Use /status to check bot health."
+    "Use /help for this menu, /patterns for chart patterns, /status to check bot health."
+)
+
+_CANDLESTICK_PATTERNS = {
+    "hammer",
+    "inverted hammer",
+    "hanging man",
+    "shooting star",
+    "doji",
+    "dragonfly doji",
+    "gravestone doji",
+    "bullish marubozu",
+    "bearish marubozu",
+    "spinning top",
+    "bullish engulfing",
+    "bearish engulfing",
+    "bullish harami",
+    "bearish harami",
+    "tweezer top",
+    "tweezer bottom",
+    "piercing line",
+    "dark cloud cover",
+    "morning star",
+    "evening star",
+    "three white soldiers",
+    "three black crows",
+    "three inside up",
+    "three inside down",
+}
+
+_PATTERNS_TEXT = (
+    "Supported Chart Patterns\n\n"
+    "Structure Patterns:\n"
+    + "\n".join(
+        f"  - {p}"
+        for p in _KNOWN_PATTERNS
+        if p not in _CANDLESTICK_PATTERNS
+    )
+    + "\n\nCandlestick Patterns:\n"
+    + "\n".join(
+        f"  - {p}"
+        for p in _KNOWN_PATTERNS
+        if p in _CANDLESTICK_PATTERNS
+    )
+    + "\n\nUse /scan <pattern> to scan for any of these patterns.\nExample: /scan double bottom"
+)
+
+_HELP_TEXT = (
+    "Momentum Radar — Command Reference\n\n"
+    "Pattern Commands:\n"
+    "  /patterns - Full list of supported chart patterns\n"
+    "  /scan <pattern> - Scan stocks for a pattern, e.g. /scan double bottom\n\n"
+    "Options Commands:\n"
+    "  /options AAPL - Full options summary + chart\n"
+    "  /flow AAPL - Options flow analysis (smart money)\n"
+    "  /unusual - Scan for unusual options activity\n"
+    "  /maxpain AAPL - Max pain calculation\n"
+    "  /iv AAPL - Implied volatility analysis\n"
+    "  /pcr AAPL - Put/call ratio\n\n"
+    "Volume Commands:\n"
+    "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
+    "  /analyze AAPL - Full institutional-level analysis + AI summary\n\n"
+    "Pre-Market Intelligence:\n"
+    "  /premarket - Run pre-market scan (unusual vol + most active volume leaders + options spikes)\n"
+    "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
+    "  /brief - Generate daily market intelligence brief\n"
+    "  /morningbrief - Comprehensive morning briefing (futures, earnings, sector, key levels)\n\n"
+    "Fundamentals & Earnings:\n"
+    "  /fundamentals AAPL - Income statement, cash flow, assets & liabilities\n"
+    "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
+    "News & Sentiment:\n"
+    "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
+    "  /news market - Market-wide news with AI sentiment summary\n"
+    "  /news premarket - Pre-market focused news scan\n"
+    "  /marketnews - Full market-wide news search with AI summary\n"
+    "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
+    "Market Calendar:\n"
+    "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
+    "Supply & Demand Zones:\n"
+    "  /zones AAPL  - All supply & demand zones for a ticker\n"
+    "  /supply AAPL - Supply (resistance) zones only\n"
+    "  /demand AAPL - Demand (support) zones only\n\n"
+    "Automated Alerts:\n"
+    "  /alerts on     - Enable hourly squeeze + signal alerts\n"
+    "  /alerts off    - Disable automated alerts\n"
+    "  /alerts status - Show your current alert preference\n\n"
+    "Market Heatmap:\n"
+    "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
+    "Use /patterns for the full list of chart patterns. Use /status to check bot health."
 )
 
 
@@ -160,8 +247,14 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     universe = universe_builder.build()
     logger.info("Universe ready: %d tickers", len(universe))
 
+    async def _start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text(_START_TEXT)
+
     async def _help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(_HELP_TEXT)
+
+    async def _patterns_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text(_PATTERNS_TEXT)
 
     async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
@@ -1401,7 +1494,8 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         pattern_lower = pattern_name.strip().lower()
         if not pattern_lower or pattern_lower not in _KNOWN_PATTERNS:
             await update.message.reply_text(
-                f"Unknown pattern: '{pattern_name}'\n\n{_HELP_TEXT}",
+                f"Unknown pattern: '{pattern_name}'\n\n"
+                "Use /patterns to see the full list of supported chart patterns.",
             )
             return
 
@@ -1463,8 +1557,9 @@ async def start_telegram_bot() -> None:  # pragma: no cover
 
     # Build and run the application
     app = Application.builder().token(bot_token).build()
+    app.add_handler(CommandHandler("start", _start_handler))
     app.add_handler(CommandHandler("help", _help_handler))
-    app.add_handler(CommandHandler("start", _help_handler))
+    app.add_handler(CommandHandler("patterns", _patterns_handler))
     app.add_handler(CommandHandler("status", _status_handler))
     app.add_handler(CommandHandler("scan", _scan_command_handler))
     app.add_handler(CommandHandler("options", _options_handler))
