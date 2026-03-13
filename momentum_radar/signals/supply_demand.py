@@ -78,6 +78,8 @@ class SupplyDemandZone:
         impulse_magnitude:   Size of the originating impulse in ATR multiples.
         volume_expansion:    Volume ratio during impulse vs. average.
         creation_bar_index:  Index of the base start bar in the source DataFrame.
+        impulse_end_index:   Index of the first bar after the impulse ends (lifecycle
+                             analysis starts here to avoid counting base/impulse bars).
         base_range:          Range of the base in price units (stored for rescoring).
         atr:                 ATR at detection time (stored for rescoring).
     """
@@ -93,6 +95,7 @@ class SupplyDemandZone:
     impulse_magnitude: float = 0.0
     volume_expansion: float = 0.0
     creation_bar_index: int = 0
+    impulse_end_index: int = 0
     base_range: float = 0.0
     atr: float = 1.0
 
@@ -204,6 +207,7 @@ def _detect_zones(
                                     impulse_magnitude=round(impulse_move_up / atr, 2),
                                     volume_expansion=round(vol_ratio, 2),
                                     creation_bar_index=base_start,
+                                    impulse_end_index=min(i + 4, n),
                                     base_range=base_range,
                                     atr=atr,
                                 )
@@ -243,6 +247,7 @@ def _detect_zones(
                                     impulse_magnitude=round(impulse_move_dn / atr, 2),
                                     volume_expansion=round(vol_ratio, 2),
                                     creation_bar_index=base_start,
+                                    impulse_end_index=min(i + 4, n),
                                     base_range=base_range,
                                     atr=atr,
                                 )
@@ -338,8 +343,13 @@ def _update_zone_lifecycle(
     """Update ``touch_count`` and ``status`` for each zone based on *df*.
 
     A *touch* occurs when the closing price enters the zone.
-    A *break* occurs when two consecutive closes are beyond the zone boundary
-    with above-average volume.
+    A *break* occurs when two consecutive closes are meaningfully beyond the
+    zone boundary (by at least ``zone.atr * 0.10``) with at least average
+    volume.
+
+    Lifecycle analysis starts from ``impulse_end_index`` (or a conservative
+    offset from ``creation_bar_index``) to skip the base consolidation and
+    impulse bars, which would otherwise cause false touches and breaks.
 
     Args:
         zones: List of zones to update (modified in-place).
@@ -348,56 +358,82 @@ def _update_zone_lifecycle(
     if df is None or df.empty:
         return
 
-    avg_vol = float(df["volume"].mean()) if "volume" in df.columns else 0.0
+    # Use median volume to be robust against outlier impulse bars inflating avg
+    avg_vol = float(df["volume"].median()) if "volume" in df.columns else 0.0
 
     for zone in zones:
-        bar_start = zone.creation_bar_index + 1  # examine bars *after* base
-        if bar_start >= len(df):
-            continue
+        # Start AFTER the impulse ends to avoid counting base/impulse bars.
+        # impulse_end_index is set precisely in _detect_zones; fall back to a
+        # conservative offset when the field is 0 (e.g. manually created zones).
+        if zone.impulse_end_index > zone.creation_bar_index:
+            bar_start = zone.impulse_end_index
+        else:
+            bar_start = zone.creation_bar_index + _BASE_MAX_BARS + 4
 
-        subsequent = df.iloc[bar_start:]
-        closes = subsequent["close"].values
-        vols = subsequent["volume"].values if "volume" in subsequent.columns else np.ones(len(closes))
+        # Touch counting and break detection only run when there are bars
+        # after the impulse.  The rescoring below always runs.
+        if bar_start < len(df):
+            subsequent = df.iloc[bar_start:]
+            closes = subsequent["close"].values
+            vols = (
+                subsequent["volume"].values
+                if "volume" in subsequent.columns
+                else np.ones(len(closes))
+            )
 
-        in_zone_count = 0
-        consec_breaks = 0
+            in_zone_count = 0
+            consec_breaks = 0
 
-        for j, (c, v) in enumerate(zip(closes, vols)):
-            inside = zone.zone_low <= c <= zone.zone_high
-            if inside and in_zone_count == 0:
-                zone.touch_count += 1
-                in_zone_count += 1
-            elif not inside:
-                in_zone_count = 0
+            # Minimum distance a close must exceed the zone boundary before it
+            # counts toward break detection.  Prevents random noise from
+            # triggering a false zone break on tight zones.
+            break_buffer = zone.atr * 0.10 if zone.atr > 0 else 0.0
 
-            # Break detection (2 consecutive closes beyond boundary with volume)
-            if zone.zone_type == "demand" and c < zone.zone_low and v >= avg_vol * 0.8:
-                consec_breaks += 1
-            elif zone.zone_type == "supply" and c > zone.zone_high and v >= avg_vol * 0.8:
-                consec_breaks += 1
-            else:
-                consec_breaks = 0
+            for c, v in zip(closes, vols):
+                inside = zone.zone_low <= c <= zone.zone_high
+                if inside and in_zone_count == 0:
+                    zone.touch_count += 1
+                    in_zone_count += 1
+                elif not inside:
+                    in_zone_count = 0
 
-            if consec_breaks >= 2:
-                zone.status = "broken"
-                break
+                # Break detection: price must close BEYOND the zone by at least
+                # break_buffer AND have at least average volume.
+                if (
+                    zone.zone_type == "demand"
+                    and c < zone.zone_low - break_buffer
+                    and v >= avg_vol * 1.0
+                ):
+                    consec_breaks += 1
+                elif (
+                    zone.zone_type == "supply"
+                    and c > zone.zone_high + break_buffer
+                    and v >= avg_vol * 1.0
+                ):
+                    consec_breaks += 1
+                else:
+                    consec_breaks = 0
 
-        if zone.status != "broken":
-            if zone.touch_count >= 2:
-                zone.status = "tested"
-            elif zone.touch_count == 1:
-                zone.status = "tested"
-            else:
-                zone.status = "fresh"
+                if consec_breaks >= 2:
+                    zone.status = "broken"
+                    break
 
-        # Refresh score with updated touch count, using original base_range and atr
+            if zone.status != "broken":
+                if zone.touch_count >= 1:
+                    zone.status = "tested"
+                else:
+                    zone.status = "fresh"
+
+        # Always refresh the strength score – even when no subsequent bars
+        # exist yet.  Uses the zone's current touch_count and status so the
+        # score is consistent with its lifecycle state.
         if zone.status != "broken":
             zone.strength_score = round(
                 _compute_score(
                     impulse_magnitude=zone.impulse_magnitude,
                     volume_expansion=zone.volume_expansion,
                     base_range=zone.base_range,
-                    atr=zone.atr if zone.atr > 0 else 1.0,  # 1.0 is a neutral unit-ATR fallback
+                    atr=zone.atr if zone.atr > 0 else 1.0,
                     touch_count=zone.touch_count,
                     status=zone.status,
                     timeframe=zone.timeframe,

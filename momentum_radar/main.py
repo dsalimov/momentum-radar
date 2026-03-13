@@ -98,11 +98,11 @@ _opening_range_alerted: Dict[str, str] = {}
 
 
 def get_active_timeframe(current_time: datetime) -> str:
-    """Return the active candle timeframe based on time of day.
+    """Return the active intraday candle timeframe based on time of day.
 
-    - 09:30–09:59 → ``"2m"`` (scalp mode)
-    - 10:00–10:59 → ``"5m"`` (intraday momentum)
-    - 11:00–close → ``"10m"`` (trend continuation)
+    - 09:30–09:59 → ``"1m"``  (scalp mode – maximum resolution at open)
+    - 10:00–10:59 → ``"5m"``  (intraday momentum – day trade primary TF)
+    - 11:00–close → ``"15m"`` (trend continuation – day trade secondary TF)
 
     Args:
         current_time: Current local time.
@@ -112,10 +112,10 @@ def get_active_timeframe(current_time: datetime) -> str:
     """
     t = current_time.strftime("%H:%M")
     if "09:30" <= t < "10:00":
-        return "2m"
+        return config.timeframes.scalp_interval         # default "1m"
     if "10:00" <= t < "11:00":
-        return "5m"
-    return "10m"
+        return config.timeframes.day_trade_interval     # default "5m"
+    return config.timeframes.day_trade_secondary_interval  # default "15m"
 
 
 def _update_opening_range(ticker: str, bars) -> None:
@@ -452,6 +452,7 @@ def _scan_ticker(
         )
 
         _mark_alerted(ticker, direction)
+        _cycle_alerted.add(ticker)  # prevent setup scanner from double-alerting this ticker
 
     except Exception as exc:
         logger.error("Unhandled error scanning %s: %s", ticker, exc, exc_info=True)
@@ -466,6 +467,10 @@ _setup_alert_time: Dict[str, float] = {}
 #: Cooldown in seconds between trade setup alerts for the same ticker.
 _SETUP_COOLDOWN_SECONDS: int = 900  # 15 minutes
 
+#: Tracks tickers that have already been alerted in the current scan cycle.
+#: Cleared at the start of every new cycle to prevent cross-strategy duplicates.
+_cycle_alerted: set = set()
+
 
 def _is_setup_on_cooldown(ticker: str) -> bool:
     """Return True if a trade-setup alert was recently sent for *ticker*."""
@@ -475,6 +480,7 @@ def _is_setup_on_cooldown(ticker: str) -> bool:
 
 def _mark_setup_alerted(ticker: str) -> None:
     _setup_alert_time[ticker] = time.time()
+    _cycle_alerted.add(ticker)
 
 
 def _scan_setups(
@@ -484,11 +490,15 @@ def _scan_setups(
 ) -> None:
     """Run the professional setup detector for *ticker* and alert on findings.
 
-    This pipeline complements the legacy scoring system.  It runs the
-    5-step trader decision model and only alerts when a high-quality setup
-    with a sufficient risk:reward ratio is confirmed.
+    Fetches data at strategy-appropriate timeframes:
 
-    Per-ticker cooldown of 15 minutes prevents duplicate alerts.
+    * Intraday bars at the active session timeframe (scalp/day/swing interval)
+    * Hourly bars for swing-trade pattern detection
+    * **200 days** of daily bars to cover 50- and 200-day moving averages
+
+    Per-ticker cooldown of 15 minutes prevents duplicate alerts.  A per-cycle
+    deduplication set (``_cycle_alerted``) prevents the same ticker appearing
+    in both the legacy scorer and the setup scanner within a single cycle.
 
     Args:
         ticker:  Stock symbol.
@@ -502,12 +512,41 @@ def _scan_setups(
         logger.debug("%s – setup scanner: on cooldown, skipping.", ticker)
         return
 
+    # Per-cycle duplicate guard: skip if this ticker was already alerted this cycle
+    if ticker in _cycle_alerted:
+        logger.debug("%s – already alerted this cycle, skipping setup scan.", ticker)
+        return
+
     try:
+        # Primary intraday bars at the session-appropriate interval
         active_tf = get_active_timeframe(now)
         bars = fetcher.get_intraday_bars(ticker, interval=active_tf, period="1d")
-        daily = fetcher.get_daily_bars(ticker, period="60d")
 
+        # Hourly bars for swing-trade pattern detection (1H candles, last 30 days)
+        bars_1h: Optional[object] = None
+        try:
+            bars_1h = fetcher.get_intraday_bars(
+                ticker,
+                interval=config.timeframes.swing_interval,
+                period="30d",
+            )
+        except Exception:
+            pass  # hourly bars are best-effort; daily zones still detected
+
+        # 200 days of daily data to support 50/200 MA and swing zone detection
+        swing_history = f"{config.timeframes.swing_history_days}d"
+        daily = fetcher.get_daily_bars(ticker, period=swing_history)
+
+        # Run setup detection on the primary (intraday) bars
         setups = detect_setups(ticker, bars, daily)
+
+        # If no intraday setups and hourly bars are available, try swing detection
+        if not setups and bars_1h is not None:
+            try:
+                setups = detect_setups(ticker, bars_1h, daily)
+            except Exception as exc:
+                logger.debug("%s – hourly setup detection error: %s", ticker, exc)
+
         if not setups:
             return
 
@@ -524,8 +563,15 @@ def _scan_setups(
             try:
                 chart_path: Optional[str] = None
                 from momentum_radar.ui.chart_renderer import render_trade_setup_chart
-                if bars is not None and not bars.empty:
-                    chart_path = render_trade_setup_chart(setup, bars)
+
+                def _has_data(df_arg) -> bool:
+                    return df_arg is not None and not (
+                        hasattr(df_arg, "empty") and df_arg.empty
+                    )
+
+                chart_bars = bars if _has_data(bars) else bars_1h
+                if _has_data(chart_bars):
+                    chart_path = render_trade_setup_chart(setup, chart_bars)
             except Exception as chart_exc:
                 logger.debug("Chart generation skipped for %s: %s", ticker, chart_exc)
                 chart_path = None
@@ -611,6 +657,9 @@ async def run_scanner() -> None:
                 market_penalty,
             )
 
+            # Clear per-cycle dedup set so each new cycle starts fresh
+            _cycle_alerted.clear()
+
             for ticker in universe:
                 if _SHUTDOWN:
                     break
@@ -671,6 +720,10 @@ def main() -> None:
 def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
     """Run a one-shot pattern scan from the CLI.
 
+    Only emits an alert for a match when at least 2 of 3 context checks
+    (volume, MA position, ATR expansion) confirm the pattern direction.
+    This ensures no pattern fires in isolation.
+
     Args:
         pattern_name: Name of the pattern to detect.
         tickers_arg:  Optional comma-separated ticker override.
@@ -678,6 +731,9 @@ def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
     from momentum_radar.patterns.detector import scan_for_pattern, available_patterns
     from momentum_radar.patterns.charts import generate_pattern_chart
     from momentum_radar.alerts.telegram_alert import send_telegram_photo
+    from momentum_radar.alerts.golden_sweep_formatter import format_pattern_signal_alert
+    from momentum_radar.services.signal_engine import get_pattern_confirmations
+    from momentum_radar.utils.indicators import compute_atr
 
     if pattern_name.lower() not in available_patterns():
         print(
@@ -705,28 +761,93 @@ def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
         return
 
     print(f"\n✅ Found {len(matches)} match(es):\n")
+    alerted = 0
     for match in matches:
         ticker = match["ticker"]
         confidence = match.get("confidence", 0)
-        description = match.get("description", "")
         df = match.get("df")
+        direction = match.get("direction", "BULLISH")
+        breakout_level = match.get("breakout_level") or match.get("neckline", 0.0)
 
-        print(f"  📊 {ticker} — {match['pattern']} ({confidence}%)")
-        print(f"     {description}\n")
+        # Fetch daily bars for context validation (best-effort)
+        daily_ctx = None
+        try:
+            daily_ctx = fetcher.get_daily_bars(ticker, period="60d")
+        except Exception:
+            pass
 
-        # Generate and save chart
+        # Validate: require at least 2 of 3 context confirmations
+        confirmed, conf_tags = get_pattern_confirmations(
+            ticker, df, daily_ctx, direction=direction
+        )
+
+        if not confirmed:
+            logger.info(
+                "%s – pattern '%s' detected but context unconfirmed – skipping alert.",
+                ticker, pattern_name,
+            )
+            print(f"  ⏭  {ticker} — unconfirmed context, skipping.")
+            continue
+
+        # Calculate trade parameters
+        # Prefer the pattern's own measured levels; fall back to ATR multiples
+        atr_val = 0.0
+        current_price = 0.0
+        try:
+            if daily_ctx is not None and not daily_ctx.empty:
+                atr_val = compute_atr(daily_ctx) or 0.0
+                current_price = float(daily_ctx["close"].iloc[-1])
+        except Exception:
+            pass
+
+        direction_upper = direction.upper()
+        # Entry = at the neckline (limit order waiting for breakout confirmation)
+        entry = float(breakout_level) if breakout_level else current_price
+
+        # Use pattern's own stop/target when available (most accurate)
+        stop = match.get("stop_level") or 0.0
+        target = match.get("target_level") or 0.0
+
+        # Fall back to ATR multiples when pattern doesn't supply levels
+        if not stop and atr_val > 0 and current_price > 0:
+            stop = current_price + atr_val * 1.5 if direction_upper == "BEARISH" else current_price - atr_val * 1.5
+        if not target and atr_val > 0 and current_price > 0:
+            target = current_price - atr_val * 3.0 if direction_upper == "BEARISH" else current_price + atr_val * 3.0
+
+        # Format the simplified 4–5 line alert
+        msg = format_pattern_signal_alert(
+            ticker=ticker,
+            pattern_name=match["pattern"],
+            confidence=float(confidence),
+            direction=direction_upper,
+            entry=entry,
+            stop=float(stop) if stop else entry,
+            target=float(target) if target else entry,
+            breakout=entry,
+            atr=atr_val,
+            confirmations=conf_tags,
+        )
+
+        print(f"\n{msg}\n")
+
+        # Generate and deliver chart
         if df is not None and not df.empty:
             try:
                 chart_path = generate_pattern_chart(ticker, df, match)
                 print(f"     Chart saved: {chart_path}")
-                caption = (
-                    f"{ticker} — {match['pattern']} "
-                    f"(Confidence: {confidence}%)\n{description}"
-                )
-                if not send_telegram_photo(chart_path, caption):
+                if not send_telegram_photo(chart_path, msg):
                     logger.debug("Telegram photo delivery skipped or failed for %s.", ticker)
+                send_discord_alert(msg, image_path=chart_path)
             except Exception as exc:
                 logger.warning("Could not generate chart for %s: %s", ticker, exc)
+        else:
+            send_telegram_alert(msg)
+            send_discord_alert(msg)
+
+        alerted += 1
+
+    if alerted == 0:
+        print("\n⚠️  All matches were filtered out — no context confirmations met.")
 
 
 if __name__ == "__main__":

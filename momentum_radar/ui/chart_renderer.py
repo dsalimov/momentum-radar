@@ -5,11 +5,12 @@ Generates annotated PNG charts for Telegram / Discord alerts.
 
 Chart style
 -----------
-* Dark background (nightclouds theme)
+* Pure black background
+* Green candles for bullish bars, red for bearish
 * Entry line  → green
 * Stop line   → red
 * Target line → blue
-* S&D zones   → purple shading
+* S&D zones / pattern highlights → yellow dashed lines
 * Volume panel below price
 
 File naming: ``{SYMBOL}_{TIMEFRAME}_{TIMESTAMP}.png``
@@ -46,8 +47,8 @@ logger = logging.getLogger(__name__)
 _COLOR_ENTRY  = "#27AE60"   # green
 _COLOR_STOP   = "#E74C3C"   # red
 _COLOR_TARGET = "#2980B9"   # blue
-_COLOR_ZONE   = "#8E44AD"   # purple (S&D zones)
-_COLOR_BG     = "#1a1a2e"   # dark background
+_COLOR_ZONE   = "#FFD700"   # yellow (S&D zones / pattern highlights)
+_COLOR_BG     = "#000000"   # pure black background
 
 # Number of bars shown in the generated chart (keeps the image clean and fast)
 _MAX_CHART_BARS: int = 60
@@ -139,25 +140,24 @@ def render_signal_chart(
         gridaxis="both",
     )
 
-    # Additional plots for zone shading
+    # Additional plots for zone shading (yellow dashed, consistent with pattern highlights)
     add_plots = []
     if zone_high is not None and zone_low is not None:
-        fill_color = _COLOR_ZONE
         fill = mpf.make_addplot(
             [zone_high] * len(plot_df),
             type="line",
-            color=fill_color,
+            color=_COLOR_ZONE,
             linestyle="--",
-            width=0.8,
-            alpha=0.5,
+            width=1.2,
+            alpha=0.85,
         )
         fill_low = mpf.make_addplot(
             [zone_low] * len(plot_df),
             type="line",
-            color=fill_color,
+            color=_COLOR_ZONE,
             linestyle="--",
-            width=0.8,
-            alpha=0.5,
+            width=1.2,
+            alpha=0.85,
         )
         add_plots.extend([fill, fill_low])
 

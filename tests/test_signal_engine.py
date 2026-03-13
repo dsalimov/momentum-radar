@@ -538,20 +538,23 @@ class TestGetActiveTimeframe:
     def test_scalp_window(self):
         from momentum_radar.main import get_active_timeframe
 
+        # 09:30–09:59 → scalp interval (default "1m")
         dt = datetime(2024, 1, 15, 9, 45)
-        assert get_active_timeframe(dt) == "2m"
+        assert get_active_timeframe(dt) == "1m"
 
     def test_intraday_window(self):
         from momentum_radar.main import get_active_timeframe
 
+        # 10:00–10:59 → day-trade interval (default "5m")
         dt = datetime(2024, 1, 15, 10, 30)
         assert get_active_timeframe(dt) == "5m"
 
     def test_trend_window(self):
         from momentum_radar.main import get_active_timeframe
 
+        # 11:00+ → day-trade secondary interval (default "15m")
         dt = datetime(2024, 1, 15, 13, 0)
-        assert get_active_timeframe(dt) == "10m"
+        assert get_active_timeframe(dt) == "15m"
 
     def test_boundary_10am(self):
         from momentum_radar.main import get_active_timeframe
@@ -562,5 +565,6 @@ class TestGetActiveTimeframe:
     def test_boundary_11am(self):
         from momentum_radar.main import get_active_timeframe
 
+        # 11:00 → secondary interval (default "15m")
         dt = datetime(2024, 1, 15, 11, 0)
-        assert get_active_timeframe(dt) == "10m"
+        assert get_active_timeframe(dt) == "15m"

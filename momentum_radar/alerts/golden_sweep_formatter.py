@@ -1,7 +1,7 @@
 """
 alerts/golden_sweep_formatter.py – Professional alert formatters.
 
-Produces the two canonical institutional alert formats defined in the
+Produces the canonical institutional alert formats defined in the
 project blueprint:
 
 1. **Golden Sweep Alert** – for large options-flow sweeps::
@@ -18,7 +18,14 @@ project blueprint:
        Setup: Ascending Triangle Breakout → Bullish Swing Trade
        ...
 
-Both functions return a plain string suitable for Telegram messages and
+3. **Pattern Signal Alert** – simplified 4-line format for quick decisions::
+
+       📊 WM — Double Top
+       🔴 BEARISH · 90% confidence
+       Entry: $238.61 | Stop: $239.64 | Target: $218.13
+       Breakout: $218.13 · ATR: $5.41
+
+All functions return a plain string suitable for Telegram messages and
 Discord text payloads.
 
 Usage::
@@ -26,10 +33,14 @@ Usage::
     from momentum_radar.alerts.golden_sweep_formatter import (
         format_golden_sweep_alert,
         format_chart_pattern_alert,
+        format_pattern_signal_alert,
     )
 
     msg = format_golden_sweep_alert(sweep_alert)
     msg = format_chart_pattern_alert(setup, pattern_name="Ascending Triangle")
+    msg = format_pattern_signal_alert("WM", "Double Top", 90.0, "BEARISH",
+                                      entry=238.61, stop=239.64, target=218.13,
+                                      breakout=218.13, atr=5.41)
 """
 
 from __future__ import annotations
@@ -207,5 +218,67 @@ def format_chart_pattern_alert(
         f"Confidence: {setup.confidence}",
     ]
 
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Simplified Pattern Signal Alert (4-line quick-read format)
+# ---------------------------------------------------------------------------
+
+def format_pattern_signal_alert(
+    ticker: str,
+    pattern_name: str,
+    confidence: float,
+    direction: str,
+    entry: float,
+    stop: float,
+    target: float,
+    breakout: float,
+    atr: float,
+    confirmations: Optional[list] = None,
+) -> str:
+    """Format a chart-pattern signal into a concise 4–5 line actionable alert.
+
+    Designed for quick reading — shows only what a trader needs to act::
+
+        📊 WM — Double Top
+        🔴 BEARISH · 90% confidence
+        Entry: $238.61 | Stop: $239.64 | Target: $218.13
+        Breakout: $218.13 · ATR: $5.41
+        ✅ Volume ↑ (1.8x) · Below 50MA · ATR expanding
+
+    The optional fifth line shows the volume/MA/ATR context that was used to
+    validate the pattern.  No pattern alone guarantees a trade — this line
+    communicates that at least 2 independent confirmations aligned.
+
+    Args:
+        ticker:        Stock ticker symbol.
+        pattern_name:  Human-readable pattern name, e.g. ``"Double Top"``.
+        confidence:    Confidence score (0–100).
+        direction:     ``"BULLISH"`` or ``"BEARISH"``.
+        entry:         Suggested entry price.
+        stop:          Stop-loss price.
+        target:        Profit-target price.
+        breakout:      Key neckline / breakout level.
+        atr:           14-day Average True Range.
+        confirmations: Optional list of brief confirmation tag strings
+                       (e.g. ``["Volume ↑ (1.8x)", "Below 50MA", "ATR expanding"]``).
+                       When provided they appear as a single ``✅`` line.
+
+    Returns:
+        Formatted 4–5 line string ready for Telegram or Discord.
+    """
+    direction_upper = direction.upper()
+    emoji = "🟢" if direction_upper == "BULLISH" else "🔴"
+    confidence_int = int(round(confidence))
+
+    lines = [
+        f"📊 {ticker} — {pattern_name}",
+        f"{emoji} {direction_upper} · {confidence_int}% confidence",
+        f"Entry: ${entry:.2f} | Stop: ${stop:.2f} | Target: ${target:.2f}",
+        f"Breakout: ${breakout:.2f} · ATR: ${atr:.2f}",
+    ]
+    if confirmations:
+        lines.append("✅ " + " · ".join(confirmations))
     return "\n".join(lines)
 

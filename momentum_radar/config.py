@@ -246,6 +246,49 @@ class PaperTradingConfig:
 
 
 @dataclass
+class TimeframeConfig:
+    """Strategy-specific candle timeframes and history periods.
+
+    Different trading strategies require different candle granularities and
+    lookback windows:
+
+    * **Scalp** – 1–5 min candles, last 5 days of data
+    * **Day trade** – 5–15 min candles, 60 days for moving averages
+    * **Swing** – 1 H / 4 H / 1 D candles, 200 days for 50/200 MA alignment
+    """
+
+    # Scalp trade timeframes
+    scalp_interval: str = field(default_factory=lambda: _str("SCALP_INTERVAL", "1m"))
+    scalp_fast_interval: str = field(default_factory=lambda: _str("SCALP_FAST_INTERVAL", "5m"))
+    scalp_history_days: int = field(default_factory=lambda: _int("SCALP_HISTORY_DAYS", 5))
+
+    # Day trade timeframes
+    day_trade_interval: str = field(default_factory=lambda: _str("DAY_TRADE_INTERVAL", "5m"))
+    day_trade_secondary_interval: str = field(
+        default_factory=lambda: _str("DAY_TRADE_SECONDARY_INTERVAL", "15m")
+    )
+    day_trade_ma_short: int = field(default_factory=lambda: _int("DAY_TRADE_MA_SHORT", 20))
+    day_trade_ma_long: int = field(default_factory=lambda: _int("DAY_TRADE_MA_LONG", 50))
+    day_trade_history_days: int = field(
+        default_factory=lambda: _int("DAY_TRADE_HISTORY_DAYS", 60)
+    )
+
+    # Swing trade timeframes
+    swing_interval: str = field(default_factory=lambda: _str("SWING_INTERVAL", "1h"))
+    swing_secondary_interval: str = field(
+        default_factory=lambda: _str("SWING_SECONDARY_INTERVAL", "4h")
+    )
+    swing_daily_interval: str = field(
+        default_factory=lambda: _str("SWING_DAILY_INTERVAL", "1d")
+    )
+    swing_ma_short: int = field(default_factory=lambda: _int("SWING_MA_SHORT", 50))
+    swing_ma_long: int = field(default_factory=lambda: _int("SWING_MA_LONG", 200))
+    swing_history_days: int = field(
+        default_factory=lambda: _int("SWING_HISTORY_DAYS", 200)
+    )
+
+
+@dataclass
 class AppConfig:
     """Top-level application configuration."""
 
@@ -258,6 +301,7 @@ class AppConfig:
     universe: UniverseConfig = field(default_factory=UniverseConfig)
     market_hours: MarketHoursConfig = field(default_factory=MarketHoursConfig)
     paper_trading: PaperTradingConfig = field(default_factory=PaperTradingConfig)
+    timeframes: TimeframeConfig = field(default_factory=TimeframeConfig)
 
 
 # Singleton config instance used throughout the application
