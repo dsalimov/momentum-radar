@@ -9,6 +9,9 @@ Additional tables
 - ``alert_preferences`` – per-chat user preference for automated alerts on/off
 - ``squeeze_alert_records`` – tracks last alert time + score per ticker for
   spam-filter logic (no same ticker within 6 h unless score rises by ≥ 10)
+- ``signal_category_records`` – tracks last alert time per (ticker, alert_type)
+  so that each signal category (chart_pattern, candlestick, options_flow,
+  squeeze_momentum, general) has its own independent cooldown
 """
 
 import logging
@@ -69,6 +72,22 @@ class SqueezeAlertRecord(Base):
     ticker = Column(String(16), primary_key=True, nullable=False)
     last_alerted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_score = Column(Integer, nullable=False, default=0)
+
+
+class SignalCategoryRecord(Base):
+    """Tracks the last time a categorized signal alert was sent for a (ticker, alert_type) pair.
+
+    Each signal category (``chart_pattern``, ``candlestick``, ``options_flow``,
+    ``squeeze_momentum``, ``general``) has its own independent cooldown,
+    preventing the same category from re-firing for the same ticker within a
+    configurable window while still allowing different categories to alert.
+    """
+
+    __tablename__ = "signal_category_records"
+
+    ticker = Column(String(16), primary_key=True, nullable=False)
+    alert_type = Column(String(32), primary_key=True, nullable=False)
+    last_alerted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 def init_db(db_url: str = "sqlite:///momentum_radar.db") -> None:
@@ -264,3 +283,71 @@ def record_squeeze_alert(ticker: str, score: int) -> None:
             logger.debug("Squeeze alert recorded for %s (score=%d)", ticker, score)
     except Exception as exc:
         logger.error("Failed to record squeeze alert for %s: %s", ticker, exc)
+
+
+# ---------------------------------------------------------------------------
+# Per-category signal alert spam-filter helpers
+# ---------------------------------------------------------------------------
+
+_SIGNAL_CATEGORY_COOLDOWN_HOURS: int = 4
+
+
+def should_send_signal_alert(ticker: str, alert_type: str, cooldown_hours: Optional[int] = None) -> bool:
+    """Decide whether a categorized signal alert for *(ticker, alert_type)* should be sent.
+
+    Each ``alert_type`` (e.g. ``"chart_pattern"``, ``"candlestick"``,
+    ``"options_flow"``, ``"squeeze_momentum"``, ``"general"``) has its own
+    independent cooldown.  A (ticker, alert_type) pair that has not been alerted
+    before, or whose last alert is older than *cooldown_hours*, is allowed.
+
+    Args:
+        ticker:         Stock symbol.
+        alert_type:     Signal category string (e.g. ``"chart_pattern"``).
+        cooldown_hours: How many hours must elapse before re-alerting the same
+                        (ticker, alert_type) pair.  Defaults to
+                        :data:`_SIGNAL_CATEGORY_COOLDOWN_HOURS`.
+
+    Returns:
+        ``True`` if the alert should be sent.
+    """
+    if cooldown_hours is None:
+        cooldown_hours = _SIGNAL_CATEGORY_COOLDOWN_HOURS
+    if _SessionLocal is None:
+        return True
+    try:
+        with Session(_ENGINE) as session:
+            rec = session.get(SignalCategoryRecord, (ticker, alert_type))
+            if rec is None:
+                return True
+            elapsed = datetime.utcnow() - rec.last_alerted_at
+            return elapsed >= timedelta(hours=cooldown_hours)
+    except Exception as exc:
+        logger.error("should_send_signal_alert error for %s/%s: %s", ticker, alert_type, exc)
+        return True
+
+
+def record_signal_alert(ticker: str, alert_type: str) -> None:
+    """Record that a categorized signal alert was sent for *(ticker, alert_type)*.
+
+    Args:
+        ticker:     Stock symbol.
+        alert_type: Signal category string (e.g. ``"chart_pattern"``).
+    """
+    if _SessionLocal is None:
+        return
+    try:
+        with Session(_ENGINE) as session:
+            rec = session.get(SignalCategoryRecord, (ticker, alert_type))
+            if rec is None:
+                rec = SignalCategoryRecord(
+                    ticker=ticker,
+                    alert_type=alert_type,
+                    last_alerted_at=datetime.utcnow(),
+                )
+                session.add(rec)
+            else:
+                rec.last_alerted_at = datetime.utcnow()
+            session.commit()
+            logger.debug("Signal alert recorded for %s/%s", ticker, alert_type)
+    except Exception as exc:
+        logger.error("Failed to record signal alert for %s/%s: %s", ticker, alert_type, exc)
