@@ -6,14 +6,14 @@ project blueprint:
 
 1. **Golden Sweep Alert** – for large options-flow sweeps::
 
-       🚨 GOLDEN SWEEP ALERT
+       🚨 DAY TRADE
        Ticker: TSLA
        Setup: Weekly Call Sweep → Bullish Day Trade
        ...
 
 2. **Autonomous Trade Alert** – for chart-pattern-driven setups::
 
-       🚨 AUTONOMOUS TRADE ALERT
+       🚨 SWING TRADE
        Ticker: NVDA
        Setup: Ascending Triangle Breakout → Bullish Swing Trade
        ...
@@ -38,8 +38,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from momentum_radar.signals.golden_sweep import SweepAlert
-from momentum_radar.signals.setup_detector import SetupDirection, TradeSetup
+from momentum_radar.options.golden_sweep_detector import SweepAlert
+from momentum_radar.signals.setup_detector import SetupDirection, StrategyType, TradeSetup
 
 #: RVOL threshold used to classify a pattern alert as a Day Trade vs. Swing Trade.
 _PATTERN_DAY_TRADE_RVOL: float = 2.5
@@ -53,12 +53,15 @@ def format_golden_sweep_alert(
     sweep: SweepAlert,
     timestamp: Optional[datetime] = None,
 ) -> str:
-    """Format a :class:`~momentum_radar.signals.golden_sweep.SweepAlert`
-    into the canonical blueprint alert string.
+    """Format a :class:`~momentum_radar.options.golden_sweep_detector.SweepAlert`
+    into the canonical strategy-classified alert string.
+
+    The header uses the sweep's ``trade_type`` to select the strategy label:
+    ``Day Trade`` → ``🚨 DAY TRADE``, ``Swing Trade`` → ``🚨 SWING TRADE``.
 
     Example output::
 
-        🚨 GOLDEN SWEEP ALERT
+        🚨 DAY TRADE
         Ticker: TSLA
         Setup: Weekly Call Sweep → Bullish Day Trade
         Underlying Price: 740.50
@@ -67,7 +70,7 @@ def format_golden_sweep_alert(
         Estimated Flow: 12,000 contracts
         Entry: 742.00
         Stop: 737.00
-        Target: 755.00–760.00
+        Target: 757.00
         RVOL: 2.3
         Volume Spike: 4.0x avg
         Supply/Demand Alignment: Demand Zone 740–742
@@ -75,8 +78,9 @@ def format_golden_sweep_alert(
         Confidence: High
 
     Args:
-        sweep:     :class:`SweepAlert` produced by
-                   :func:`~momentum_radar.signals.golden_sweep.detect_golden_sweep`.
+        sweep:     :class:`~momentum_radar.options.golden_sweep_detector.SweepAlert`
+                   produced by
+                   :func:`~momentum_radar.options.golden_sweep_detector.detect_golden_sweep`.
         timestamp: Override for the alert time (defaults to ``sweep.timestamp``).
 
     Returns:
@@ -89,6 +93,14 @@ def format_golden_sweep_alert(
     contract_label = "Call" if sweep.contract_type == "call" else "Put"
     setup_label = f"{sweep.expiration} {contract_label} Sweep → {bias_label} {sweep.trade_type}"
 
+    # Strategy header based on trade type
+    _TRADE_TYPE_TO_STRATEGY = {
+        "Day Trade": "DAY TRADE",
+        "Swing Trade": "SWING TRADE",
+        "Position Trade": "SWING TRADE",
+    }
+    strategy_label = _TRADE_TYPE_TO_STRATEGY.get(sweep.trade_type, "DAY TRADE")
+
     flow_label = (
         f"~${sweep.estimated_flow:,.0f} notional"
         if sweep.estimated_flow >= 1_000
@@ -96,7 +108,7 @@ def format_golden_sweep_alert(
     )
 
     lines = [
-        "🚨 GOLDEN SWEEP ALERT",
+        f"🚨 {strategy_label}",
         f"Ticker: {sweep.ticker}",
         f"Setup: {setup_label}",
         f"Underlying Price: {sweep.underlying_price:.2f}",
@@ -126,11 +138,14 @@ def format_chart_pattern_alert(
     sweep_info: Optional[str] = None,
     timestamp: Optional[datetime] = None,
 ) -> str:
-    """Format a chart-pattern trade setup into the canonical blueprint alert string.
+    """Format a chart-pattern trade setup into the canonical strategy alert string.
+
+    The header uses ``setup.strategy_type`` to determine the strategy label
+    (e.g. ``🚨 SWING TRADE`` for chart-pattern breakouts).
 
     Example output::
 
-        🚨 AUTONOMOUS TRADE ALERT
+        🚨 SWING TRADE
         Ticker: NVDA
         Setup: Ascending Triangle Breakout → Bullish Swing Trade
         Pattern Detected: Ascending Triangle
@@ -148,9 +163,7 @@ def format_chart_pattern_alert(
         setup:        :class:`~momentum_radar.signals.setup_detector.TradeSetup`
                       from the setup detector.
         pattern_name: Human-readable pattern name, e.g. ``"Ascending Triangle"``.
-        sweep_info:   Optional sweep annotation string
-                      (e.g. ``"Weekly Call Sweep 5,000 contracts"``).
-                      Pass ``None`` to omit the Golden Sweep line.
+        sweep_info:   Optional sweep annotation string.  Pass ``None`` to omit.
         timestamp:    Override for the alert time.
 
     Returns:
@@ -167,8 +180,14 @@ def format_chart_pattern_alert(
     trade_type_label = "Swing Trade" if setup.rvol < _PATTERN_DAY_TRADE_RVOL else "Day Trade"
     setup_label = f"{pattern_name} Breakout → {direction_label} {trade_type_label}"
 
+    # Strategy header
+    if setup.strategy_type is not None:
+        strategy_label = setup.strategy_type.value
+    else:
+        strategy_label = StrategyType.SWING_TRADE.value
+
     lines = [
-        "🚨 AUTONOMOUS TRADE ALERT",
+        f"🚨 {strategy_label}",
         f"Ticker: {setup.ticker}",
         f"Setup: {setup_label}",
         f"Pattern Detected: {pattern_name}",
@@ -189,3 +208,4 @@ def format_chart_pattern_alert(
     ]
 
     return "\n".join(lines)
+

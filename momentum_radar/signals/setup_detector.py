@@ -35,7 +35,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -93,22 +93,49 @@ class SetupDirection(Enum):
     SHORT = "Short"
 
 
+class StrategyType(Enum):
+    """High-level trading strategy classification for user-facing alerts.
+
+    Every :class:`TradeSetup` is automatically classified into one of these
+    three categories so that the alert header clearly communicates the expected
+    time horizon and trading style.
+    """
+
+    SCALP_TRADE = "SCALP TRADE"
+    DAY_TRADE = "DAY TRADE"
+    SWING_TRADE = "SWING TRADE"
+
+
+#: Mapping from setup type to the appropriate strategy classification.
+_SETUP_STRATEGY: Dict[SetupType, StrategyType] = {
+    SetupType.LIQUIDITY_SWEEP:        StrategyType.SCALP_TRADE,
+    SetupType.MOMENTUM_IGNITION:      StrategyType.SCALP_TRADE,
+    SetupType.VWAP_RECLAIM:           StrategyType.DAY_TRADE,
+    SetupType.VWAP_BREAKDOWN:         StrategyType.DAY_TRADE,
+    SetupType.OPENING_RANGE_BREAKOUT: StrategyType.DAY_TRADE,
+    SetupType.GOLDEN_SWEEP:           StrategyType.DAY_TRADE,
+    SetupType.SUPPORT_BOUNCE:         StrategyType.DAY_TRADE,
+    SetupType.CHART_PATTERN_BREAKOUT: StrategyType.SWING_TRADE,
+}
+
+
 @dataclass
 class TradeSetup:
     """A single, fully-defined trade setup with entry, stop and target.
 
     Attributes:
-        ticker:       Stock symbol.
-        setup_type:   One of the :class:`SetupType` values.
-        direction:    ``LONG`` or ``SHORT``.
-        entry:        Suggested entry price.
-        stop:         Stop-loss price.
-        target:       Profit-target price.
-        rvol:         Relative volume at signal time.
-        volume_spike: Current-bar volume vs. recent average (multiplier).
-        confidence:   Qualitative confidence grade (``"High"`` / ``"Medium"``).
-        timestamp:    When the setup was detected.
-        details:      Human-readable description of triggering conditions.
+        ticker:        Stock symbol.
+        setup_type:    One of the :class:`SetupType` values.
+        direction:     ``LONG`` or ``SHORT``.
+        entry:         Suggested entry price.
+        stop:          Stop-loss price.
+        target:        Profit-target price.
+        rvol:          Relative volume at signal time.
+        volume_spike:  Current-bar volume vs. recent average (multiplier).
+        confidence:    Qualitative confidence grade (``"High"`` / ``"Medium"``).
+        timestamp:     When the setup was detected.
+        details:       Human-readable description of triggering conditions.
+        strategy_type: Auto-computed trading strategy classification.
     """
 
     ticker: str
@@ -122,6 +149,13 @@ class TradeSetup:
     confidence: str
     timestamp: datetime
     details: str = ""
+    strategy_type: Optional[StrategyType] = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.strategy_type is None:
+            self.strategy_type = _SETUP_STRATEGY.get(
+                self.setup_type, StrategyType.DAY_TRADE
+            )
 
     @property
     def risk_reward(self) -> float:

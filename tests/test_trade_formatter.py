@@ -43,7 +43,7 @@ def _make_setup(**kwargs) -> TradeSetup:
 def test_format_trade_setup_contains_required_fields():
     """Alert must contain all required fields."""
     msg = format_trade_setup(_make_setup(), timestamp=_FIXED_TS)
-    assert "🚨 TRADE SETUP" in msg
+    assert "🚨 DAY TRADE" in msg
     assert "MAR" in msg
     assert "VWAP Breakdown" in msg
     assert "Short" in msg

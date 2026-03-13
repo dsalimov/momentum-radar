@@ -16,14 +16,14 @@ import pytest
 
 from momentum_radar.signals.golden_sweep import (
     GoldenSweepSetup,
-    detect_golden_sweep,
+    detect_golden_sweep as _detect_sweep_v1,
     golden_sweep_signal,
     _classify_sweep_type,
     _days_to_expiry,
     _nearest_sd_zone,
     _select_best_sweep,
 )
-from momentum_radar.alerts.trade_formatter import format_golden_sweep_alert
+from momentum_radar.alerts.trade_formatter import format_golden_sweep_alert as _format_sweep_alert_v1
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ class TestDetectGoldenSweep:
         )
         bars = _make_intraday_bars(close=100.0, trend="up", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is not None
         assert result.direction == "Bullish"
         assert result.contract_type == "Call"
@@ -312,7 +312,7 @@ class TestDetectGoldenSweep:
         )
         bars = _make_intraday_bars(close=100.0, trend="down", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is not None
         assert result.direction == "Bearish"
         assert result.contract_type == "Put"
@@ -323,14 +323,14 @@ class TestDetectGoldenSweep:
         options_data = _options_flow_with_call_sweep(contracts=2000, expiry=_weekly_expiry())
         bars = _make_intraday_bars(close=100.0, trend="down", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is None
 
     def test_bearish_sweep_rejected_on_uptrend(self):
         options_data = _options_flow_with_put_sweep(contracts=1500, expiry=_weekly_expiry())
         bars = _make_intraday_bars(close=100.0, trend="up", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is None
 
     def test_calls_beat_puts_chooses_bullish(self):
@@ -354,7 +354,7 @@ class TestDetectGoldenSweep:
         }
         bars = _make_intraday_bars(close=100.0, trend="up", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is not None
         assert result.direction == "Bullish"
 
@@ -365,7 +365,7 @@ class TestDetectGoldenSweep:
         )
         bars = _make_intraday_bars(close=100.0, trend="up", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         assert result is not None
         assert result.sweep_type == "2-3 Week"
         assert result.trade_type == "Swing Trade"
@@ -374,7 +374,7 @@ class TestDetectGoldenSweep:
         options_data = _options_flow_with_call_sweep(contracts=2000, expiry=_weekly_expiry())
         bars = _make_intraday_bars(close=100.0, trend="up", high_volume=True)
         daily = _make_daily_bars(close=100.0)
-        result = detect_golden_sweep("TEST", options_data, bars, daily)
+        result = _detect_sweep_v1("TEST", options_data, bars, daily)
         if result is not None:
             assert result.risk_reward >= 1.5
 
@@ -442,72 +442,72 @@ class TestFormatGoldenSweepAlert:
 
     def test_alert_contains_golden_sweep_header(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
-        assert "🚨 GOLDEN SWEEP ALERT" in msg
+        msg = _format_sweep_alert_v1(setup)
+        assert "🚨 DAY TRADE" in msg
 
     def test_alert_contains_ticker(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "TSLA" in msg
 
     def test_alert_contains_setup_line(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "Weekly Call Sweep → Bullish Day Trade" in msg
 
     def test_alert_contains_underlying_price(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "740.50" in msg
 
     def test_alert_contains_strike(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "750" in msg
 
     def test_alert_contains_contracts(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "12,000" in msg
 
     def test_alert_contains_entry_stop_target(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "742.00" in msg
         assert "737.00" in msg
         assert "755.00" in msg
 
     def test_alert_contains_rvol_and_volume_spike(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "2.3" in msg
         assert "4.0x" in msg
 
     def test_alert_contains_supply_demand_zone(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "Demand Zone 740.00–742.00" in msg
 
     def test_alert_contains_confidence(self):
         setup = self._make_setup()
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "High" in msg
 
     def test_alert_na_when_no_sd_zone(self):
         setup = self._make_setup(supply_demand_zone=None)
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "N/A" in msg
 
     def test_alert_contains_time(self):
         setup = self._make_setup(timestamp=datetime(2024, 1, 15, 12, 45, 0))
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "12:45 PM EST" in msg
 
     def test_default_timestamp_used_when_none(self):
         """format_golden_sweep_alert uses the setup's timestamp when no override is given."""
         ts = datetime(2024, 6, 20, 10, 30, 0)
         setup = self._make_setup(timestamp=ts)
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "10:30 AM EST" in msg
 
     def test_alert_bearish_put_setup(self):
@@ -518,7 +518,7 @@ class TestFormatGoldenSweepAlert:
             stop=103.0,
             target=94.0,
         )
-        msg = format_golden_sweep_alert(setup)
+        msg = _format_sweep_alert_v1(setup)
         assert "Bearish" in msg
         assert "Put" in msg
 
@@ -529,6 +529,9 @@ class TestFormatGoldenSweepAlert:
     def test_risk_reward_zero_when_no_risk(self):
         setup = self._make_setup(entry=100.0, stop=100.0, target=110.0)
         assert setup.risk_reward == 0.0
+
+
+from momentum_radar.options.golden_sweep_detector import (
     SWEEP_COOLDOWN_SECONDS,
     SWEEP_DAY_TRADE_MAX_DTE,
     SWEEP_MIN_RVOL,
@@ -828,7 +831,7 @@ def test_format_golden_sweep_alert_required_fields():
     alert = _make_sweep_alert()
     msg = format_golden_sweep_alert(alert, timestamp=_FIXED_TS)
 
-    assert "🚨 GOLDEN SWEEP ALERT" in msg
+    assert "🚨 DAY TRADE" in msg
     assert "TSLA" in msg
     assert "Weekly" in msg
     assert "Call" in msg
@@ -903,7 +906,7 @@ def test_format_chart_pattern_alert_required_fields():
         timestamp=_FIXED_TS,
     )
 
-    assert "🚨 AUTONOMOUS TRADE ALERT" in msg
+    assert "🚨 SWING TRADE" in msg
     assert "NVDA" in msg
     assert "Ascending Triangle" in msg
     assert "Bullish" in msg

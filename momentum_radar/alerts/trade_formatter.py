@@ -6,7 +6,7 @@ output, Telegram messages, and Discord embeds.
 
 Alert format example (standard trade setup)::
 
-    🚨 TRADE SETUP
+    🚨 DAY TRADE
 
     Ticker: MAR
     Setup: VWAP Breakdown
@@ -25,7 +25,7 @@ Alert format example (standard trade setup)::
 
 Alert format example (Golden Sweep)::
 
-    🚨 GOLDEN SWEEP ALERT
+    🚨 DAY TRADE
 
     Ticker: TSLA
     Setup: Weekly Call Sweep → Bullish Day Trade
@@ -105,9 +105,10 @@ def format_trade_setup(
     setup_emoji = _SETUP_EMOJI.get(setup.setup_type, "🚨")
     conf_emoji = _CONFIDENCE_EMOJI.get(setup.confidence, "✅")
     rr = setup.risk_reward
+    strategy_label = setup.strategy_type.value
 
     lines = [
-        f"🚨 TRADE SETUP",
+        f"🚨 {strategy_label}",
         "",
         f"Ticker:    {setup.ticker}",
         f"Setup:     {setup_emoji} {setup.setup_type.value}",
@@ -162,9 +163,10 @@ def format_golden_sweep_alert(
 ) -> str:
     """Build a professional Golden Sweep alert string.
 
-    Matches the canonical format from the trading bot specification::
+    The header uses the setup's trade type to classify the signal as a
+    ``DAY TRADE`` or ``SWING TRADE`` per the strategy classification standard::
 
-        🚨 GOLDEN SWEEP ALERT
+        🚨 DAY TRADE
 
         Ticker: TSLA
         Setup: Weekly Call Sweep → Bullish Day Trade
@@ -200,8 +202,17 @@ def format_golden_sweep_alert(
     rr = setup.risk_reward
     sd_line = setup.supply_demand_zone or "N/A"
 
+    # Derive strategy label from trade_type
+    _TRADE_TYPE_TO_STRATEGY = {
+        "Day Trade": "DAY TRADE",
+        "Swing Trade": "SWING TRADE",
+        "Position Trade": "SWING TRADE",
+    }
+    trade_type = getattr(setup, "trade_type", "Day Trade")
+    strategy_label = _TRADE_TYPE_TO_STRATEGY.get(trade_type, "DAY TRADE")
+
     lines = [
-        "🚨 GOLDEN SWEEP ALERT",
+        f"🚨 {strategy_label}",
         "",
         f"Ticker:            {setup.ticker}",
         f"Setup:             {setup.sweep_type} {setup.contract_type} Sweep → {setup.direction} {setup.trade_type}",
