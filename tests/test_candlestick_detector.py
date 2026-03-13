@@ -106,7 +106,7 @@ def test_candlestick_patterns_registry_complete():
         "bullish engulfing", "bearish engulfing",
         "bullish harami", "bearish harami",
         "tweezer top", "tweezer bottom",
-        "piercing line", "dark cloud cover",
+        "piercing line", "rising sun", "dark cloud cover",
         "morning star", "evening star",
         "three white soldiers", "three black crows",
         "three inside up", "three inside down",

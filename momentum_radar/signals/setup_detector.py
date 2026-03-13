@@ -84,6 +84,9 @@ class SetupType(Enum):
     SUPPORT_BOUNCE = "Support Bounce"
     MOMENTUM_IGNITION = "Momentum Ignition"
     CHART_PATTERN_BREAKOUT = "Chart Pattern Breakout"
+    RESISTANCE_BREAK = "Resistance Break"
+    SUPPORT_BREAK = "Support Break"
+    CANDLESTICK_REVERSAL = "Candlestick Reversal"
 
 
 class SetupDirection(Enum):
@@ -116,6 +119,9 @@ _SETUP_STRATEGY: Dict[SetupType, StrategyType] = {
     SetupType.GOLDEN_SWEEP:           StrategyType.DAY_TRADE,
     SetupType.SUPPORT_BOUNCE:         StrategyType.DAY_TRADE,
     SetupType.CHART_PATTERN_BREAKOUT: StrategyType.SWING_TRADE,
+    SetupType.RESISTANCE_BREAK:       StrategyType.DAY_TRADE,
+    SetupType.SUPPORT_BREAK:          StrategyType.DAY_TRADE,
+    SetupType.CANDLESTICK_REVERSAL:   StrategyType.DAY_TRADE,
 }
 
 
@@ -883,6 +889,342 @@ def _detect_momentum_ignition(
 
 
 # ---------------------------------------------------------------------------
+# Resistance/Support Break detectors
+# ---------------------------------------------------------------------------
+
+def _detect_resistance_break(
+    ticker: str,
+    bars: pd.DataFrame,
+    daily: Optional[pd.DataFrame],
+    rvol: float,
+) -> Optional[TradeSetup]:
+    """Detect a confirmed resistance break (bullish setup).
+
+    A resistance break occurs when the current bar closes **above** a prior
+    resistance level with above-average volume after at least two prior
+    rejections at that level.  As described in the problem statement:
+    "As soon as NFLX broke the RESISTANCE at 336, the bulls or buyers took
+    over and sent the stock soaring higher."
+
+    Entry rules (from problem statement):
+    - Enter at the confirmation that price has taken out the resistance layer
+      on volume.
+    - Stop below the broken resistance level (now acting as support).
+    - Target: entry + 2 × ATR (next likely resistance area).
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday OHLCV DataFrame.
+        daily:  Daily OHLCV DataFrame (improves ATR accuracy).
+        rvol:   Relative volume at signal time.
+
+    Returns:
+        :class:`TradeSetup` or ``None``.
+    """
+    if bars is None or len(bars) < 5:
+        return None
+
+    curr = bars.iloc[-1]
+    prev = bars.iloc[-2]
+    curr_close = float(curr["close"])
+    curr_high = float(curr["high"])
+    prev_close = float(prev["close"])
+
+    vol_mult = _volume_spike_mult(bars)
+    if vol_mult < MIN_VOLUME_SPIKE_MULT:
+        return None
+
+    resistances = _find_resistance_levels(bars)
+    if not resistances:
+        return None
+
+    atr = compute_atr(daily) if daily is not None else None
+    if atr is None or atr <= 0:
+        atr = curr_close * 0.01
+
+    for resistance in resistances:
+        # Current close broke above resistance; previous close was below/at it
+        if curr_close > resistance and prev_close <= resistance * (1 + SR_PROXIMITY_PCT):
+            entry = curr_close
+            # Stop sits just below the broken resistance (now support)
+            stop = round(resistance * (1 - STOP_BUFFER_PCT), 2)
+            target = round(entry + 2.0 * atr, 2)
+
+            if abs(entry - stop) <= 0:
+                continue
+            if abs(target - entry) / abs(entry - stop) < MIN_RISK_REWARD:
+                continue
+
+            return TradeSetup(
+                ticker=ticker,
+                setup_type=SetupType.RESISTANCE_BREAK,
+                direction=SetupDirection.LONG,
+                entry=round(entry, 2),
+                stop=stop,
+                target=target,
+                rvol=round(rvol, 1),
+                volume_spike=vol_mult,
+                confidence="High" if vol_mult >= STRONG_VOLUME_SPIKE_MULT else "Medium",
+                timestamp=datetime.now(),
+                details=(
+                    f"Resistance break at ${resistance:.2f}; "
+                    f"close ${curr_close:.2f} above resistance on {vol_mult:.1f}x vol; "
+                    f"buyers overtook sellers — bullish momentum"
+                ),
+            )
+
+    return None
+
+
+def _detect_support_break(
+    ticker: str,
+    bars: pd.DataFrame,
+    daily: Optional[pd.DataFrame],
+    rvol: float,
+) -> Optional[TradeSetup]:
+    """Detect a confirmed support break (bearish setup).
+
+    A support break occurs when the current bar closes **below** a prior
+    support level with above-average volume after multiple prior bounces at
+    that level.  As described in the problem statement:
+    "After the sellers took over and the buyers stepped down, the stock fell
+    through 391.30 and collapsed all the way down."
+
+    Entry rules (from problem statement):
+    - Enter at the confirmation that price has flushed out the support layer
+      on volume.
+    - Stop above the broken support level (now acting as resistance).
+    - Target: entry − 2 × ATR (next likely support area).
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday OHLCV DataFrame.
+        daily:  Daily OHLCV DataFrame (improves ATR accuracy).
+        rvol:   Relative volume at signal time.
+
+    Returns:
+        :class:`TradeSetup` or ``None``.
+    """
+    if bars is None or len(bars) < 5:
+        return None
+
+    curr = bars.iloc[-1]
+    prev = bars.iloc[-2]
+    curr_close = float(curr["close"])
+    prev_close = float(prev["close"])
+
+    vol_mult = _volume_spike_mult(bars)
+    if vol_mult < MIN_VOLUME_SPIKE_MULT:
+        return None
+
+    supports = _find_support_levels(bars)
+    if not supports:
+        return None
+
+    atr = compute_atr(daily) if daily is not None else None
+    if atr is None or atr <= 0:
+        atr = curr_close * 0.01
+
+    for support in sorted(supports, reverse=True):
+        # Current close broke below support; previous close was above/at it
+        if curr_close < support and prev_close >= support * (1 - SR_PROXIMITY_PCT):
+            entry = curr_close
+            # Stop sits just above the broken support (now resistance)
+            stop = round(support * (1 + STOP_BUFFER_PCT), 2)
+            target = round(entry - 2.0 * atr, 2)
+
+            if abs(entry - stop) <= 0:
+                continue
+            if abs(target - entry) / abs(entry - stop) < MIN_RISK_REWARD:
+                continue
+
+            return TradeSetup(
+                ticker=ticker,
+                setup_type=SetupType.SUPPORT_BREAK,
+                direction=SetupDirection.SHORT,
+                entry=round(entry, 2),
+                stop=stop,
+                target=target,
+                rvol=round(rvol, 1),
+                volume_spike=vol_mult,
+                confidence="High" if vol_mult >= STRONG_VOLUME_SPIKE_MULT else "Medium",
+                timestamp=datetime.now(),
+                details=(
+                    f"Support break at ${support:.2f}; "
+                    f"close ${curr_close:.2f} below support on {vol_mult:.1f}x vol; "
+                    f"sellers overtook buyers — bearish momentum"
+                ),
+            )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Candlestick-based reversal setup detector
+# ---------------------------------------------------------------------------
+
+# Candlestick patterns that signal bullish reversals with their entry rules
+_BULLISH_CANDLE_PATTERNS = {
+    "doji",
+    "dragonfly doji",
+    "bullish engulfing",
+    "bullish harami",
+    "piercing line",
+    "rising sun",
+    "hammer",
+    "morning star",
+    "three inside up",
+    "three white soldiers",
+}
+
+# Candlestick patterns that signal bearish reversals with their entry rules
+_BEARISH_CANDLE_PATTERNS = {
+    "gravestone doji",
+    "bearish engulfing",
+    "bearish harami",
+    "dark cloud cover",
+    "shooting star",
+    "evening star",
+    "three inside down",
+    "three black crows",
+}
+
+
+def _detect_candlestick_reversal(
+    ticker: str,
+    bars: pd.DataFrame,
+    daily: Optional[pd.DataFrame],
+    rvol: float,
+) -> Optional[TradeSetup]:
+    """Detect a candlestick-pattern-based reversal trade setup.
+
+    Applies the entry rules from the problem statement:
+
+    - **Doji-Bullish**: enter on the *second green candle* after a doji
+      (wait for confirmation that bulls have taken over).
+    - **Doji-Bearish**: enter on the doji candle or the first bearish candle
+      following the doji.
+    - **Bullish Engulfing**: enter bullish just before the close of the
+      engulfing candle.
+    - **Bearish Engulfing**: enter bearish just before the close of the
+      engulfing candle.
+    - **Harami / Dark Cloud Cover / Rising Sun**: enter in the direction of
+      the reversal on confirmation.
+
+    Uses the daily OHLCV bars for pattern detection (4H/1D candles are
+    most reliable for candlestick analysis, as noted in the problem statement).
+
+    Stop is placed 1 × ATR beyond the pattern's key level.
+    Target is 2 × ATR in the direction of the trade (min 1.5 R:R).
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday OHLCV DataFrame.
+        daily:  Daily OHLCV DataFrame.
+        rvol:   Relative volume at signal time.
+
+    Returns:
+        :class:`TradeSetup` or ``None``.
+    """
+    if daily is None or len(daily) < 3:
+        return None
+
+    try:
+        from momentum_radar.patterns.candlestick_detector import detect_candlestick_pattern
+    except ImportError:
+        logger.debug("candlestick_detector not available")
+        return None
+
+    last_close = float(daily["close"].iloc[-1])
+    last_open = float(daily["open"].iloc[-1])
+    last_high = float(daily["high"].iloc[-1])
+    last_low = float(daily["low"].iloc[-1])
+
+    atr = compute_atr(daily) if daily is not None else None
+    if atr is None or atr <= 0:
+        atr = last_close * 0.01
+
+    # --- Check bullish candlestick patterns ---
+    for pattern_name in _BULLISH_CANDLE_PATTERNS:
+        result = detect_candlestick_pattern(pattern_name, daily)
+        if result is None:
+            continue
+
+        # Doji requires second green candle confirmation
+        if "doji" in pattern_name:
+            if last_close <= last_open:
+                continue  # Not yet a confirmation candle
+
+        entry = last_close
+        stop = round(last_low - atr, 2)
+        target = round(entry + 2.0 * atr, 2)
+
+        if abs(entry - stop) <= 0:
+            continue
+        if abs(target - entry) / abs(entry - stop) < MIN_RISK_REWARD:
+            continue
+
+        confidence = result.get("confidence", 70.0)
+        grade = "High" if confidence >= 75 else "Medium"
+
+        return TradeSetup(
+            ticker=ticker,
+            setup_type=SetupType.CANDLESTICK_REVERSAL,
+            direction=SetupDirection.LONG,
+            entry=round(entry, 2),
+            stop=stop,
+            target=target,
+            rvol=round(rvol, 1),
+            volume_spike=_volume_spike_mult(bars) if bars is not None else 0.0,
+            confidence=grade,
+            timestamp=datetime.now(),
+            details=(
+                f"Bullish {result['pattern']} candlestick reversal; "
+                f"close ${entry:.2f}; stop ${stop:.2f}; "
+                f"enter bullish on confirmation"
+            ),
+        )
+
+    # --- Check bearish candlestick patterns ---
+    for pattern_name in _BEARISH_CANDLE_PATTERNS:
+        result = detect_candlestick_pattern(pattern_name, daily)
+        if result is None:
+            continue
+
+        entry = last_close
+        stop = round(last_high + atr, 2)
+        target = round(entry - 2.0 * atr, 2)
+
+        if abs(entry - stop) <= 0:
+            continue
+        if abs(target - entry) / abs(entry - stop) < MIN_RISK_REWARD:
+            continue
+
+        confidence = result.get("confidence", 70.0)
+        grade = "High" if confidence >= 75 else "Medium"
+
+        return TradeSetup(
+            ticker=ticker,
+            setup_type=SetupType.CANDLESTICK_REVERSAL,
+            direction=SetupDirection.SHORT,
+            entry=round(entry, 2),
+            stop=stop,
+            target=target,
+            rvol=round(rvol, 1),
+            volume_spike=_volume_spike_mult(bars) if bars is not None else 0.0,
+            confidence=grade,
+            timestamp=datetime.now(),
+            details=(
+                f"Bearish {result['pattern']} candlestick reversal; "
+                f"close ${entry:.2f}; stop ${stop:.2f}; "
+                f"enter bearish on confirmation"
+            ),
+        )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -894,6 +1236,9 @@ _SETUP_PRIORITY = [
     ("vwap_breakdown", _detect_vwap_breakdown),
     ("support_bounce", _detect_support_bounce),
     ("momentum_ignition", _detect_momentum_ignition),
+    ("resistance_break", _detect_resistance_break),
+    ("support_break", _detect_support_break),
+    ("candlestick_reversal", _detect_candlestick_reversal),
 ]
 
 

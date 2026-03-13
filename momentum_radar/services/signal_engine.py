@@ -185,11 +185,16 @@ def _check_candlestick(
 ) -> Optional[Confirmation]:
     """Detect significant candlestick patterns at key levels.
 
-    Patterns checked:
-    - Bullish engulfing (last bar body fully wraps prior bar body, bullish)
-    - Hammer (small body + long lower wick, at support)
-    - Shooting star (small body + long upper wick, at resistance) – bearish
-    - Bearish engulfing (last bar body fully wraps prior bar, bearish)
+    Patterns checked (aligned with the trading rules from the problem statement):
+    - Bullish engulfing – enter bullish just before close on day of engulfing candle
+    - Bearish engulfing – enter bearish just before close on day of engulfing candle
+    - Hammer (small body + long lower wick, at support) – bullish reversal
+    - Shooting star (small body + long upper wick, at resistance) – bearish reversal
+    - Doji – potential reversal; bullish if followed by a green candle, bearish otherwise
+    - Bullish harami – small bullish body inside prior bearish body
+    - Bearish harami – small bearish body inside prior bullish body
+    - Dark cloud cover – bearish reversal after uptrend
+    - Rising sun (piercing line) – bullish reversal after downtrend
     """
     # Use daily bars for candlestick analysis (more reliable than 1m)
     df = daily if (daily is not None and len(daily) >= 2) else None
@@ -202,18 +207,33 @@ def _check_candlestick(
     lo = float(df["low"].iloc[-1])
 
     prev_o = float(df["open"].iloc[-2])
+    prev_h = float(df["high"].iloc[-2])
+    prev_l = float(df["low"].iloc[-2])
     prev_c = float(df["close"].iloc[-2])
 
     body = abs(c - o)
+    prev_body = abs(prev_c - prev_o)
     total_range = h - lo if h > lo else 1e-9
 
     # --- Bullish Engulfing ---
+    # Enter bullish just before close on day of engulfing candle
     if c > o and prev_c < prev_o:  # current bullish, previous bearish
         if o <= prev_c and c >= prev_o:  # engulfs prior body
             return Confirmation(
                 name="Bullish Engulfing",
                 category="candlestick",
-                detail="Bullish engulfing at support level",
+                detail="Bullish engulfing — enter bullish before close",
+                confidence=75.0,
+            )
+
+    # --- Bearish Engulfing ---
+    # Enter bearish just before close on day of engulfing candle
+    if c < o and prev_c > prev_o:  # current bearish, previous bullish
+        if o >= prev_c and c <= prev_o:
+            return Confirmation(
+                name="Bearish Engulfing",
+                category="candlestick",
+                detail="Bearish engulfing — enter bearish before close",
                 confidence=75.0,
             )
 
@@ -247,13 +267,86 @@ def _check_candlestick(
             confidence=72.0,
         )
 
-    # --- Bearish Engulfing ---
-    if c < o and prev_c > prev_o:  # current bearish, previous bullish
-        if o >= prev_c and c <= prev_o:
+    # --- Doji (indecision / potential reversal) ---
+    # Bullish: enter on second green candle confirmation
+    # Bearish: enter on doji or following bearish candle
+    doji_threshold = total_range * 0.1 if total_range > 0 else 1e-9
+    if body <= doji_threshold:
+        if c >= o:
             return Confirmation(
-                name="Bearish Engulfing",
+                name="Doji (Bullish)",
                 category="candlestick",
-                detail="Bearish engulfing at resistance",
+                detail="Doji with bullish close — potential bullish reversal, enter on confirmation",
+                confidence=65.0,
+            )
+        return Confirmation(
+            name="Doji (Bearish)",
+            category="candlestick",
+            detail="Doji with bearish close — potential bearish reversal, enter on doji or next bearish candle",
+            confidence=65.0,
+        )
+
+    # --- Bullish Harami ---
+    # Small bullish body contained within prior bearish body
+    if (
+        prev_c < prev_o  # previous candle bearish
+        and c > o  # current candle bullish
+        and body < prev_body
+        and o >= min(prev_o, prev_c)
+        and c <= max(prev_o, prev_c)
+    ):
+        return Confirmation(
+            name="Bullish Harami",
+            category="candlestick",
+            detail="Bullish harami — bearish momentum flipping to bullish",
+            confidence=68.0,
+        )
+
+    # --- Bearish Harami ---
+    # Small bearish body contained within prior bullish body
+    if (
+        prev_c > prev_o  # previous candle bullish
+        and c < o  # current candle bearish
+        and body < prev_body
+        and o <= max(prev_o, prev_c)
+        and c >= min(prev_o, prev_c)
+    ):
+        return Confirmation(
+            name="Bearish Harami",
+            category="candlestick",
+            detail="Bearish harami — bullish momentum flipping to bearish",
+            confidence=68.0,
+        )
+
+    # --- Dark Cloud Cover (bearish reversal after uptrend) ---
+    if len(df) >= 3:
+        if (
+            prev_c > prev_o  # previous bullish
+            and c < o  # current bearish
+            and o > prev_h  # opened above prior high
+            and c < (prev_o + prev_c) / 2  # closed below prior midpoint
+            and c > prev_o  # but not a full engulf
+        ):
+            return Confirmation(
+                name="Dark Cloud Cover",
+                category="candlestick",
+                detail="Dark cloud cover — bullish momentum fading, sellers taking control",
+                confidence=75.0,
+            )
+
+    # --- Rising Sun / Piercing Line (bullish reversal after downtrend) ---
+    if len(df) >= 3:
+        if (
+            prev_c < prev_o  # previous bearish
+            and c > o  # current bullish
+            and o < prev_l  # opened below prior low
+            and c > (prev_o + prev_c) / 2  # closed above prior midpoint
+            and c < prev_o  # but not a full engulf
+        ):
+            return Confirmation(
+                name="Rising Sun",
+                category="candlestick",
+                detail="Rising sun (piercing line) — bearish momentum fading, buyers taking control",
                 confidence=75.0,
             )
 

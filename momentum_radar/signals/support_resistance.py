@@ -7,6 +7,10 @@ Registered signals
                              (historically high-probability reversal setup)
 - ``failed_breakout``      – price breaks a key level then immediately reverses
                              (bull trap / bear trap / liquidity sweep)
+- ``resistance_break``     – price closes above a prior resistance level on volume
+                             (bullish momentum signal — buyers overtake sellers)
+- ``support_break``        – price closes below a prior support level on volume
+                             (bearish momentum signal — sellers overtake buyers)
 """
 
 import logging
@@ -247,4 +251,169 @@ def failed_breakout(
         triggered=False,
         score=0,
         details="No failed breakout pattern detected",
+    )
+
+
+def _find_local_highs(daily: pd.DataFrame, lookback: int = _LOOKBACK) -> List[float]:
+    """Return distinct local-high price levels from the last *lookback* daily bars.
+
+    A bar qualifies as a local high when its high is greater than the adjacent
+    bars.  Nearby levels (within ``_LEVEL_TOLERANCE``) are merged.
+
+    Args:
+        daily:    Daily OHLCV DataFrame.
+        lookback: Number of bars to search.
+
+    Returns:
+        Sorted list of distinct resistance price levels (ascending).
+    """
+    if len(daily) < 5:
+        return []
+
+    highs = daily["high"].values[-lookback:]
+    raw: List[float] = []
+
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
+            raw.append(float(highs[i]))
+
+    merged: List[float] = []
+    for lvl in sorted(raw):
+        if not merged or abs(lvl - merged[-1]) / merged[-1] > _LEVEL_TOLERANCE:
+            merged.append(lvl)
+
+    return merged
+
+
+@register_signal("resistance_break")
+def resistance_break(
+    ticker: str,
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+    **kwargs,
+) -> SignalResult:
+    """Detect a confirmed break above a resistance level (bullish signal).
+
+    As described in the problem statement: "As soon as the key resistance
+    level was taken out by buyers, sellers stepped out of the picture and
+    the stock moved up on strong bullish momentum/buying."
+
+    A resistance break is confirmed when:
+    - The current daily close is above a prior resistance level.
+    - The prior daily close was below or at that resistance level.
+    - Current volume exceeds the 20-bar average.
+
+    Score: +2 on strong-volume break, +1 on moderate-volume break.
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday 1-min OHLCV DataFrame (unused; daily preferred).
+        daily:  Daily OHLCV DataFrame (at least 5 bars).
+
+    Returns:
+        :class:`~momentum_radar.signals.base.SignalResult`
+    """
+    if daily is None or len(daily) < 5:
+        return SignalResult(triggered=False, score=0, details="Insufficient daily data")
+
+    resistance_levels = _find_local_highs(daily)
+    if not resistance_levels:
+        return SignalResult(triggered=False, score=0, details="No resistance levels detected")
+
+    last_close = float(daily["close"].iloc[-1])
+    prev_close = float(daily["close"].iloc[-2])
+
+    last_vol = float(daily["volume"].iloc[-1]) if "volume" in daily.columns else 0.0
+    avg_vol = (
+        float(daily["volume"].iloc[-21:-1].mean())
+        if "volume" in daily.columns and len(daily) >= 21
+        else last_vol
+    )
+
+    for level in resistance_levels:
+        above_now = last_close > level
+        below_before = prev_close <= level * (1 + _LEVEL_TOLERANCE)
+        if above_now and below_before:
+            volume_mult = last_vol / avg_vol if avg_vol > 0 else 1.0
+            score = 2 if volume_mult >= 1.5 else 1
+            return SignalResult(
+                triggered=True,
+                score=score,
+                details=(
+                    f"Resistance break: closed ${last_close:.2f} above ${level:.2f} "
+                    f"on {volume_mult:.1f}x volume — bullish momentum signal"
+                ),
+            )
+
+    return SignalResult(
+        triggered=False,
+        score=0,
+        details="No resistance break detected",
+    )
+
+
+@register_signal("support_break")
+def support_break(
+    ticker: str,
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+    **kwargs,
+) -> SignalResult:
+    """Detect a confirmed break below a support level (bearish signal).
+
+    As described in the problem statement: "After the sellers took over
+    and the buyers stepped down, the stock fell through [support] and
+    collapsed."
+
+    A support break is confirmed when:
+    - The current daily close is below a prior support level.
+    - The prior daily close was above or at that support level.
+    - Current volume exceeds the 20-bar average.
+
+    Score: +2 on strong-volume break, +1 on moderate-volume break.
+
+    Args:
+        ticker: Stock symbol.
+        bars:   Intraday 1-min OHLCV DataFrame (unused; daily preferred).
+        daily:  Daily OHLCV DataFrame (at least 5 bars).
+
+    Returns:
+        :class:`~momentum_radar.signals.base.SignalResult`
+    """
+    if daily is None or len(daily) < 5:
+        return SignalResult(triggered=False, score=0, details="Insufficient daily data")
+
+    support_levels = _find_local_lows(daily)
+    if not support_levels:
+        return SignalResult(triggered=False, score=0, details="No support levels detected")
+
+    last_close = float(daily["close"].iloc[-1])
+    prev_close = float(daily["close"].iloc[-2])
+
+    last_vol = float(daily["volume"].iloc[-1]) if "volume" in daily.columns else 0.0
+    avg_vol = (
+        float(daily["volume"].iloc[-21:-1].mean())
+        if "volume" in daily.columns and len(daily) >= 21
+        else last_vol
+    )
+
+    for level in sorted(support_levels, reverse=True):
+        below_now = last_close < level
+        above_before = prev_close >= level * (1 - _LEVEL_TOLERANCE)
+        if below_now and above_before:
+            volume_mult = last_vol / avg_vol if avg_vol > 0 else 1.0
+            score = 2 if volume_mult >= 1.5 else 1
+            return SignalResult(
+                triggered=True,
+                score=score,
+                details=(
+                    f"Support break: closed ${last_close:.2f} below ${level:.2f} "
+                    f"on {volume_mult:.1f}x volume — bearish momentum signal"
+                ),
+            )
+
+    return SignalResult(
+        triggered=False,
+        score=0,
+        details="No support break detected",
     )
