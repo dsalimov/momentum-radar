@@ -59,7 +59,7 @@ from momentum_radar.alerts.formatter import format_alert
 from momentum_radar.alerts.trade_formatter import format_trade_setup
 from momentum_radar.alerts.discord_alert import send_discord_alert
 from momentum_radar.alerts.telegram_alert import send_telegram_alert
-from momentum_radar.storage.database import init_db, save_alert
+from momentum_radar.storage.database import init_db, save_alert, record_signal_alert
 from momentum_radar.storage.logger import log_alert_csv
 from momentum_radar.utils.indicators import compute_rvol, compute_atr
 from momentum_radar.utils.market_hours import (
@@ -453,6 +453,12 @@ def _scan_ticker(
 
         _mark_alerted(ticker, direction)
         _cycle_alerted.add(ticker)  # prevent setup scanner from double-alerting this ticker
+        # Register with the shared DB cooldown so the hourly scheduler does not
+        # re-alert this ticker for the same general signal type within 4 hours.
+        try:
+            record_signal_alert(ticker, "general")
+        except Exception:
+            pass
 
     except Exception as exc:
         logger.error("Unhandled error scanning %s: %s", ticker, exc, exc_info=True)
