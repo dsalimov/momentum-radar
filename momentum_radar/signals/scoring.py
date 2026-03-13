@@ -103,6 +103,9 @@ _MODULE_WEIGHTS: Dict[str, int] = {
     "third_touch_support":   12,  # Third touch of a key horizontal support level
     "volatility_expansion":  12,  # Day range expansion relative to ATR
     "failed_breakout":       10,  # Liquidity trap / bull-trap / bear-trap
+    "resistance_break":      15,  # Price closes above resistance on volume (bullish)
+    "support_break":         15,  # Price closes below support on volume (bearish)
+    "candlestick_reversal":  10,  # Candlestick pattern-based reversal signal
     "volatility_squeeze":     8,  # Bollinger Band squeeze expansion
     "short_interest":         5,  # High short-interest float (squeeze fuel)
 }

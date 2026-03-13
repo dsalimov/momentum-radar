@@ -398,3 +398,247 @@ def test_detect_setups_no_duplicate_setup_types():
     setups = detect_setups("TEST", bars, daily)
     types_seen = [s.setup_type for s in setups]
     assert len(types_seen) == len(set(types_seen))
+
+
+# ---------------------------------------------------------------------------
+# Resistance Break and Support Break setup detectors
+# ---------------------------------------------------------------------------
+
+class TestResistanceBreakSetup:
+    """Tests for _detect_resistance_break."""
+
+    def test_imports(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            _detect_resistance_break,
+        )
+        assert SetupType.RESISTANCE_BREAK.value == "Resistance Break"
+
+    def test_resistance_break_bullish_setup(self):
+        """When price closes above a multi-touch resistance on strong volume."""
+        from momentum_radar.signals.setup_detector import (
+            _detect_resistance_break,
+            SetupType,
+            SetupDirection,
+        )
+
+        resistance = 110.0
+        n = 40
+        prices = [100.0] * n
+        vols = [1_000_000] * n
+
+        # Build two touches at resistance (to qualify the level)
+        highs = [p * 1.002 for p in prices]
+        lows = [p * 0.998 for p in prices]
+        closes = list(prices)
+
+        highs[-5] = resistance
+        closes[-5] = resistance - 0.5
+        highs[-4] = resistance
+        closes[-4] = resistance - 0.3
+
+        # Previous bar: below resistance
+        closes[-2] = resistance - 0.5
+        highs[-2] = resistance + 0.05
+        lows[-2] = resistance - 1.0
+
+        # Current bar: closes above resistance on high volume
+        closes[-1] = resistance + 1.5
+        highs[-1] = resistance + 2.0
+        lows[-1] = resistance - 0.1
+        vols[-1] = 3_000_000  # 3x average
+
+        timestamps = pd.date_range("2024-01-15 09:30", periods=n, freq="5min")
+        bars = pd.DataFrame(
+            {
+                "open": [c - 0.1 for c in closes],
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": [float(v) for v in vols],
+            },
+            index=timestamps,
+        )
+        daily = _make_daily(n=60, avg_volume=5_000_000, base_price=100.0)
+
+        result = _detect_resistance_break("TEST", bars, daily, rvol=3.0)
+        assert result is not None
+        assert result.setup_type == SetupType.RESISTANCE_BREAK
+        assert result.direction == SetupDirection.LONG
+        assert result.entry > resistance
+        assert result.stop < resistance
+        assert result.risk_reward >= 1.5
+
+    def test_no_volume_returns_none(self):
+        """Without a volume spike, resistance break should not fire."""
+        from momentum_radar.signals.setup_detector import _detect_resistance_break
+
+        resistance = 110.0
+        n = 40
+        prices = [100.0] * n
+        vols = [1_000_000] * n  # uniform volume — no spike
+
+        highs = [p * 1.002 for p in prices]
+        lows = [p * 0.998 for p in prices]
+        closes = list(prices)
+
+        highs[-5] = resistance
+        closes[-5] = resistance - 0.5
+        highs[-4] = resistance
+        closes[-4] = resistance - 0.3
+
+        closes[-2] = resistance - 0.5
+        closes[-1] = resistance + 1.5
+        highs[-1] = resistance + 2.0
+        lows[-1] = resistance - 0.1
+        # vols[-1] stays at 1_000_000 — same as average, so no spike
+
+        timestamps = pd.date_range("2024-01-15 09:30", periods=n, freq="5min")
+        bars = pd.DataFrame(
+            {
+                "open": [c - 0.1 for c in closes],
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": [float(v) for v in vols],
+            },
+            index=timestamps,
+        )
+        result = _detect_resistance_break("TEST", bars, None, rvol=2.0)
+        # Without a volume spike (vol_mult < MIN_VOLUME_SPIKE_MULT), expect None
+        assert result is None
+
+
+class TestSupportBreakSetup:
+    """Tests for _detect_support_break."""
+
+    def test_imports(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            _detect_support_break,
+        )
+        assert SetupType.SUPPORT_BREAK.value == "Support Break"
+
+    def test_support_break_bearish_setup(self):
+        """When price closes below a multi-touch support on strong volume."""
+        from momentum_radar.signals.setup_detector import (
+            _detect_support_break,
+            SetupType,
+            SetupDirection,
+        )
+
+        support = 90.0
+        n = 40
+        prices = [100.0] * n
+        vols = [1_000_000] * n
+
+        highs = [p * 1.002 for p in prices]
+        lows = [p * 0.998 for p in prices]
+        closes = list(prices)
+
+        # Two bounces at support
+        lows[-5] = support
+        closes[-5] = support + 0.5
+        lows[-4] = support
+        closes[-4] = support + 0.3
+
+        # Previous bar: above support
+        closes[-2] = support + 0.5
+        lows[-2] = support - 0.05
+        highs[-2] = support + 1.0
+
+        # Current bar: closes below support on high volume
+        closes[-1] = support - 1.5
+        lows[-1] = support - 2.0
+        highs[-1] = support + 0.2
+        vols[-1] = 3_000_000  # 3x average
+
+        timestamps = pd.date_range("2024-01-15 09:30", periods=n, freq="5min")
+        bars = pd.DataFrame(
+            {
+                "open": [c + 0.1 for c in closes],
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": [float(v) for v in vols],
+            },
+            index=timestamps,
+        )
+        daily = _make_daily(n=60, avg_volume=5_000_000, base_price=100.0)
+
+        result = _detect_support_break("TEST", bars, daily, rvol=3.0)
+        assert result is not None
+        assert result.setup_type == SetupType.SUPPORT_BREAK
+        assert result.direction == SetupDirection.SHORT
+        assert result.entry < support
+        assert result.stop > support
+        assert result.risk_reward >= 1.5
+
+
+class TestCandlestickReversalSetup:
+    """Tests for _detect_candlestick_reversal."""
+
+    def test_imports(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            _detect_candlestick_reversal,
+        )
+        assert SetupType.CANDLESTICK_REVERSAL.value == "Candlestick Reversal"
+
+    def test_no_daily_returns_none(self):
+        from momentum_radar.signals.setup_detector import _detect_candlestick_reversal
+
+        result = _detect_candlestick_reversal("TEST", None, None, rvol=1.5)
+        assert result is None
+
+    def test_insufficient_daily_returns_none(self):
+        from momentum_radar.signals.setup_detector import _detect_candlestick_reversal
+
+        tiny = pd.DataFrame(
+            {"open": [100.0], "high": [101.0], "low": [99.0], "close": [100.5], "volume": [1e6]},
+            index=pd.date_range("2024-01-01", periods=1, freq="B"),
+        )
+        result = _detect_candlestick_reversal("TEST", None, tiny, rvol=1.5)
+        assert result is None
+
+
+class TestRisingSunAlias:
+    """Rising Sun is an alias for the Piercing Line pattern."""
+
+    def test_rising_sun_in_registry(self):
+        from momentum_radar.patterns.candlestick_detector import CANDLESTICK_PATTERNS
+
+        assert "rising sun" in CANDLESTICK_PATTERNS
+
+    def test_rising_sun_same_as_piercing_line(self):
+        from momentum_radar.patterns.candlestick_detector import CANDLESTICK_PATTERNS
+
+        assert CANDLESTICK_PATTERNS["rising sun"] is CANDLESTICK_PATTERNS["piercing line"]
+
+
+class TestStrategyMappingNewTypes:
+    """New setup types are mapped to DAY_TRADE strategy."""
+
+    def test_resistance_break_is_day_trade(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            StrategyType,
+            _SETUP_STRATEGY,
+        )
+        assert _SETUP_STRATEGY[SetupType.RESISTANCE_BREAK] == StrategyType.DAY_TRADE
+
+    def test_support_break_is_day_trade(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            StrategyType,
+            _SETUP_STRATEGY,
+        )
+        assert _SETUP_STRATEGY[SetupType.SUPPORT_BREAK] == StrategyType.DAY_TRADE
+
+    def test_candlestick_reversal_is_day_trade(self):
+        from momentum_radar.signals.setup_detector import (
+            SetupType,
+            StrategyType,
+            _SETUP_STRATEGY,
+        )
+        assert _SETUP_STRATEGY[SetupType.CANDLESTICK_REVERSAL] == StrategyType.DAY_TRADE

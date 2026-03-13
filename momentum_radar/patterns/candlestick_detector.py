@@ -1195,6 +1195,7 @@ CANDLESTICK_PATTERNS: Dict[str, Callable[[pd.DataFrame], Optional[Dict]]] = {
     "tweezer top": _detect_tweezer_top,
     "tweezer bottom": _detect_tweezer_bottom,
     "piercing line": _detect_piercing_line,
+    "rising sun": _detect_piercing_line,
     "dark cloud cover": _detect_dark_cloud_cover,
     "morning star": _detect_morning_star,
     "evening star": _detect_evening_star,
