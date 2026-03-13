@@ -66,48 +66,40 @@ _KNOWN_PATTERNS = [
 ]
 
 _START_TEXT = (
-    "Welcome to Momentum Radar!\n\n"
+    "Welcome to Momentum Radar!\n"
     "Professional institutional-style trading scanner.\n\n"
-    "Pattern Commands:\n"
-    "  /patterns - Full list of supported chart patterns\n"
-    "  /scan <pattern> - Scan stocks for a pattern, e.g. /scan double bottom\n\n"
-    "Options Commands:\n"
-    "  /options AAPL - Full options summary + chart\n"
-    "  /flow AAPL - Options flow analysis (smart money)\n"
-    "  /unusual - Scan for unusual options activity\n"
-    "  /maxpain AAPL - Max pain calculation\n"
-    "  /iv AAPL - Implied volatility analysis\n"
-    "  /pcr AAPL - Put/call ratio\n\n"
-    "Volume Commands:\n"
-    "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
-    "  /analyze AAPL - Full institutional-level analysis + AI summary\n\n"
-    "Pre-Market Intelligence:\n"
-    "  /premarket - Run pre-market scan (unusual vol + most active volume leaders + options spikes)\n"
-    "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
-    "  /brief - Generate daily market intelligence brief\n"
-    "  /morningbrief - Comprehensive morning briefing (futures, earnings, sector, key levels)\n\n"
-    "Fundamentals & Earnings:\n"
-    "  /fundamentals AAPL - Income statement, cash flow, assets & liabilities\n"
-    "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
-    "News & Sentiment:\n"
-    "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
-    "  /news market - Market-wide news with AI sentiment summary\n"
-    "  /news premarket - Pre-market focused news scan\n"
-    "  /marketnews - Full market-wide news search with AI summary\n"
-    "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
-    "Market Calendar:\n"
-    "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
-    "Supply & Demand Zones:\n"
-    "  /zones AAPL  - All supply & demand zones for a ticker\n"
-    "  /supply AAPL - Supply (resistance) zones only\n"
-    "  /demand AAPL - Demand (support) zones only\n\n"
-    "Automated Alerts:\n"
-    "  /alerts on     - Enable hourly squeeze + signal alerts\n"
-    "  /alerts off    - Disable automated alerts\n"
-    "  /alerts status - Show your current alert preference\n\n"
-    "Market Heatmap:\n"
-    "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
-    "Use /help for this menu, /patterns for chart patterns, /status to check bot health."
+    "Main command categories — type any command to get started:\n\n"
+    "📊 Chart Patterns\n"
+    "  /patterns  – Chart pattern scanner & candlestick library\n\n"
+    "📈 Options Trading\n"
+    "  /options   – Options analysis, flow, sweeps & greeks\n\n"
+    "📡 Signals & Scanning\n"
+    "  /signals   – Trading signals (day, swing, scalp) & scans\n\n"
+    "📰 News & Sentiment\n"
+    "  /news      – Ticker or market-wide news with AI sentiment\n\n"
+    "📋 Fundamentals & Earnings\n"
+    "  /fundamentals – Financial statements, earnings & valuation\n\n"
+    "🌅 Pre-Market Intelligence\n"
+    "  /premarket – Pre-market scan (volume, movers, options spikes)\n"
+    "  /squeeze   – Short squeeze candidates & reports\n"
+    "  /brief     – Daily market intelligence brief\n"
+    "  /morningbrief – Full morning briefing (futures, sectors, events)\n\n"
+    "🗺️ Supply & Demand Zones\n"
+    "  /zones     – All S&D zones for a ticker\n"
+    "  /supply    – Supply (resistance) zones only\n"
+    "  /demand    – Demand (support) zones only\n\n"
+    "📅 Market Calendar\n"
+    "  /dates     – Weekly economic calendar (CPI, NFP, FOMC, earnings)\n\n"
+    "📊 Market Overview\n"
+    "  /heatmap   – Live sector heatmap (color-coded by performance)\n"
+    "  /sentiment – Market sentiment engine (regime + confidence score)\n"
+    "  /analyze   – Full institutional-level analysis for a ticker\n\n"
+    "⚙️ Settings & Help\n"
+    "  /help      – Full command reference\n"
+    "  /tutorial  – Step-by-step guide for new users\n"
+    "  /settings  – Configure your alert preferences\n"
+    "  /status    – Check bot health\n\n"
+    "Type /help for detailed usage of every command."
 )
 
 _CANDLESTICK_PATTERNS = {
@@ -155,48 +147,233 @@ _PATTERNS_TEXT = (
 )
 
 _HELP_TEXT = (
-    "Momentum Radar — Command Reference\n\n"
-    "Pattern Commands:\n"
-    "  /patterns - Full list of supported chart patterns\n"
-    "  /scan <pattern> - Scan stocks for a pattern, e.g. /scan double bottom\n\n"
-    "Options Commands:\n"
-    "  /options AAPL - Full options summary + chart\n"
-    "  /flow AAPL - Options flow analysis (smart money)\n"
-    "  /unusual - Scan for unusual options activity\n"
-    "  /maxpain AAPL - Max pain calculation\n"
-    "  /iv AAPL - Implied volatility analysis\n"
-    "  /pcr AAPL - Put/call ratio\n\n"
-    "Volume Commands:\n"
-    "  /volspike - Scan for unusual volume vs 30-day average (top 15)\n"
-    "  /analyze AAPL - Full institutional-level analysis + AI summary\n\n"
-    "Pre-Market Intelligence:\n"
-    "  /premarket - Run pre-market scan (unusual vol + most active volume leaders + options spikes)\n"
-    "  /squeeze [AAPL] - Short squeeze candidates or single-ticker squeeze report\n"
-    "  /brief - Generate daily market intelligence brief\n"
-    "  /morningbrief - Comprehensive morning briefing (futures, earnings, sector, key levels)\n\n"
-    "Fundamentals & Earnings:\n"
-    "  /fundamentals AAPL - Income statement, cash flow, assets & liabilities\n"
-    "  /earnings AAPL - Earnings history, EPS beat/miss trend + AI guidance summary\n\n"
-    "News & Sentiment:\n"
-    "  /news AAPL - Latest news for a specific ticker with AI sentiment summary\n"
-    "  /news market - Market-wide news with AI sentiment summary\n"
-    "  /news premarket - Pre-market focused news scan\n"
-    "  /marketnews - Full market-wide news search with AI summary\n"
-    "  /sentiment - Market sentiment engine (regime + confidence score)\n\n"
-    "Market Calendar:\n"
-    "  /dates - Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
-    "Supply & Demand Zones:\n"
-    "  /zones AAPL  - All supply & demand zones for a ticker\n"
-    "  /supply AAPL - Supply (resistance) zones only\n"
-    "  /demand AAPL - Demand (support) zones only\n\n"
-    "Automated Alerts:\n"
-    "  /alerts on     - Enable hourly squeeze + signal alerts\n"
-    "  /alerts off    - Disable automated alerts\n"
-    "  /alerts status - Show your current alert preference\n\n"
-    "Market Heatmap:\n"
-    "  /heatmap - Live market sector heatmap (color-coded by performance)\n\n"
-    "Use /patterns for the full list of chart patterns. Use /status to check bot health."
+    "Momentum Radar — Full Command Reference\n\n"
+    "📊 Chart Patterns\n"
+    "  /patterns              – List all supported chart & candlestick patterns\n"
+    "  /patterns list         – Same as above\n"
+    "  /patterns bullish      – Bullish patterns only\n"
+    "  /patterns bearish      – Bearish patterns only\n"
+    "  /patterns explain <name> – Detailed explanation of a specific pattern\n"
+    "  /scan <pattern>        – Scan the market for a pattern (e.g. /scan double bottom)\n\n"
+    "📈 Options Trading\n"
+    "  /options <TICKER>      – Full options summary + chart\n"
+    "  /options sweep         – Scan for unusual options activity\n"
+    "  /options flow <TICKER> – Smart-money options flow analysis\n"
+    "  /options maxpain <TICKER> – Max pain strike calculation\n"
+    "  /options iv <TICKER>   – Implied volatility analysis\n"
+    "  /options pcr <TICKER>  – Put/call ratio\n"
+    "  /flow <TICKER>         – Options flow (shortcut)\n"
+    "  /unusual               – Unusual options scan (shortcut)\n"
+    "  /maxpain <TICKER>      – Max pain (shortcut)\n"
+    "  /iv <TICKER>           – IV analysis (shortcut)\n"
+    "  /pcr <TICKER>          – Put/call ratio (shortcut)\n\n"
+    "📡 Signals & Scanning\n"
+    "  /signals               – Show signals menu\n"
+    "  /signals day           – High-probability day trade signals\n"
+    "  /signals swing         – Swing trade signals (multi-week)\n"
+    "  /signals scalp         – Short-term scalp trade signals\n"
+    "  /signals scan <TICKER> – Full signal analysis for a ticker\n"
+    "  /volspike              – Unusual volume scan vs 30-day average (top 15)\n"
+    "  /analyze <TICKER>      – Full institutional-level analysis + AI summary\n\n"
+    "📰 News & Sentiment\n"
+    "  /news <TICKER>         – Ticker news with AI sentiment summary\n"
+    "  /news market           – Market-wide news with AI sentiment\n"
+    "  /news premarket        – Pre-market focused news & catalysts\n"
+    "  /marketnews            – Full market-wide news search\n"
+    "  /sentiment             – Market sentiment engine (regime + confidence)\n\n"
+    "📋 Fundamentals & Earnings\n"
+    "  /fundamentals <TICKER>          – Income statement, cash flow, balance sheet\n"
+    "  /fundamentals earnings <TICKER> – Earnings history, EPS beat/miss trend\n"
+    "  /earnings <TICKER>              – Earnings analysis (shortcut)\n\n"
+    "🌅 Pre-Market Intelligence\n"
+    "  /premarket    – Pre-market scan (unusual vol, top movers, options spikes)\n"
+    "  /squeeze [TICKER] – Short squeeze candidates or single-ticker report\n"
+    "  /brief        – Daily market intelligence brief\n"
+    "  /morningbrief – Comprehensive morning briefing (futures, sectors, events)\n\n"
+    "🗺️ Supply & Demand Zones\n"
+    "  /zones <TICKER>  – All supply & demand zones\n"
+    "  /supply <TICKER> – Supply (resistance) zones only\n"
+    "  /demand <TICKER> – Demand (support) zones only\n\n"
+    "📅 Market Calendar\n"
+    "  /dates – Weekly economic calendar (CPI, NFP, FOMC, earnings, etc.)\n\n"
+    "📊 Market Overview\n"
+    "  /heatmap    – Live sector heatmap (color-coded by performance)\n"
+    "  /tradingview <TICKER> – TradingView technical analysis\n\n"
+    "⚙️ Settings & Help\n"
+    "  /settings           – Configure alert preferences\n"
+    "  /alerts on|off|status – Enable / disable / check automated alerts\n"
+    "  /tutorial           – Step-by-step guide for new users\n"
+    "  /status             – Check bot health & universe size\n"
 )
+
+
+_SIGNALS_MENU_TEXT = (
+    "📡 Signals & Scanning\n\n"
+    "Sub-commands:\n"
+    "  /signals day           – High-probability day trade signals\n"
+    "  /signals swing         – Swing trade signals (multi-week holds)\n"
+    "  /signals scalp         – Short-term scalp trade signals\n"
+    "  /signals scan <TICKER> – Run full signal analysis for a specific ticker\n\n"
+    "Volume & Analysis:\n"
+    "  /volspike              – Unusual volume scan vs 30-day average (top 15)\n"
+    "  /analyze <TICKER>      – Full institutional-level analysis + AI summary\n"
+    "  /premarket             – Pre-market scan (volume, movers, options spikes)\n"
+    "  /squeeze [TICKER]      – Short squeeze candidates or single-ticker report"
+)
+
+_OPTIONS_MENU_TEXT = (
+    "📈 Options Trading\n\n"
+    "Sub-commands:\n"
+    "  /options <TICKER>         – Full options summary + chart\n"
+    "  /options sweep            – Scan for unusual options activity\n"
+    "  /options flow <TICKER>    – Smart-money options flow analysis\n"
+    "  /options maxpain <TICKER> – Max pain strike calculation\n"
+    "  /options iv <TICKER>      – Implied volatility analysis\n"
+    "  /options pcr <TICKER>     – Put/call ratio\n\n"
+    "Shortcuts:\n"
+    "  /flow <TICKER>    – Options flow\n"
+    "  /unusual          – Unusual options activity scan\n"
+    "  /maxpain <TICKER> – Max pain\n"
+    "  /iv <TICKER>      – Implied volatility\n"
+    "  /pcr <TICKER>     – Put/call ratio"
+)
+
+_FUNDAMENTALS_MENU_TEXT = (
+    "📋 Fundamentals & Earnings\n\n"
+    "Sub-commands:\n"
+    "  /fundamentals <TICKER>          – Income statement, cash flow, balance sheet\n"
+    "  /fundamentals earnings <TICKER> – Earnings history, EPS beat/miss trend\n\n"
+    "Shortcut:\n"
+    "  /earnings <TICKER> – Earnings analysis"
+)
+
+_TUTORIAL_TEXT = (
+    "Momentum Radar — Beginner's Guide\n\n"
+    "Step 1: Explore the Market\n"
+    "  Start your session with:\n"
+    "    /morningbrief – full briefing with futures, sectors & news\n"
+    "    /sentiment    – market regime & confidence score\n"
+    "    /heatmap      – visual sector performance overview\n\n"
+    "Step 2: Find Trading Opportunities\n"
+    "  Scan for high-conviction setups:\n"
+    "    /signals day   – day trade candidates\n"
+    "    /signals swing – swing trade candidates\n"
+    "    /volspike      – stocks with unusual volume surges\n"
+    "    /premarket     – pre-market leaders & movers\n"
+    "    /unusual       – unusual options activity scan\n\n"
+    "Step 3: Analyze a Specific Stock\n"
+    "  Once you have a ticker (e.g. AAPL):\n"
+    "    /analyze AAPL        – full institutional analysis\n"
+    "    /options AAPL        – options summary & flow\n"
+    "    /fundamentals AAPL   – financial statements\n"
+    "    /zones AAPL          – supply & demand zones\n"
+    "    /news AAPL           – latest news & AI sentiment\n"
+    "    /squeeze AAPL        – short squeeze potential\n\n"
+    "Step 4: Spot Chart Patterns\n"
+    "    /patterns bullish    – list bullish patterns\n"
+    "    /scan double bottom  – scan market for a pattern\n\n"
+    "Step 5: Set Up Alerts\n"
+    "    /settings            – configure your alert preferences\n"
+    "    /alerts on           – enable automated hourly alerts\n\n"
+    "Use /help at any time for the full command reference.\n"
+    "Use /status to verify the bot is running."
+)
+
+
+_BULLISH_PATTERNS = {
+    "double bottom", "inverse head and shoulders", "bull flag", "cup and handle",
+    "ascending triangle", "falling wedge", "pennant", "channel up", "flat base",
+    "hammer", "inverted hammer", "bullish marubozu", "bullish engulfing",
+    "bullish harami", "tweezer bottom", "piercing line", "morning star",
+    "three white soldiers", "three inside up", "dragonfly doji",
+}
+
+_BEARISH_PATTERNS = {
+    "double top", "head and shoulders", "bear flag", "descending triangle",
+    "rising wedge", "channel down", "broadening formation",
+    "hanging man", "shooting star", "bearish marubozu", "bearish engulfing",
+    "bearish harami", "tweezer top", "dark cloud cover", "evening star",
+    "three black crows", "three inside down", "gravestone doji",
+}
+
+_PATTERN_DESCRIPTIONS = {
+    "double bottom": (
+        "Double Bottom — Bullish reversal pattern.\n"
+        "Forms after a downtrend with two roughly equal lows separated by a peak.\n"
+        "Signals: buyers stepping in at support twice; breakout above the neckline confirms the reversal."
+    ),
+    "double top": (
+        "Double Top — Bearish reversal pattern.\n"
+        "Forms after an uptrend with two roughly equal highs separated by a trough.\n"
+        "Signals: sellers overpowering buyers at resistance twice; breakdown below neckline confirms reversal."
+    ),
+    "head and shoulders": (
+        "Head and Shoulders — Bearish reversal pattern.\n"
+        "Three peaks: left shoulder, higher head, right shoulder.\n"
+        "Breakdown below the neckline signals trend reversal to the downside."
+    ),
+    "inverse head and shoulders": (
+        "Inverse Head and Shoulders — Bullish reversal pattern.\n"
+        "Mirror of the head & shoulders; three troughs with the middle being deepest.\n"
+        "Breakout above neckline signals bullish trend reversal."
+    ),
+    "bull flag": (
+        "Bull Flag — Bullish continuation pattern.\n"
+        "Sharp rally (the pole) followed by a brief, orderly pullback (the flag).\n"
+        "Breakout above the flag channel targets a move equal to the pole length."
+    ),
+    "bear flag": (
+        "Bear Flag — Bearish continuation pattern.\n"
+        "Sharp sell-off (the pole) followed by a brief, orderly bounce (the flag).\n"
+        "Breakdown below flag channel targets a move equal to the pole length."
+    ),
+    "hammer": (
+        "Hammer — Bullish reversal candlestick.\n"
+        "Small real body near the top, long lower shadow (2x+ body), little upper shadow.\n"
+        "Signals: buyers rejecting lower prices; strongest after a downtrend."
+    ),
+    "shooting star": (
+        "Shooting Star — Bearish reversal candlestick.\n"
+        "Small real body near the bottom, long upper shadow, little lower shadow.\n"
+        "Signals: buyers rejected at highs; strongest after an uptrend."
+    ),
+    "doji": (
+        "Doji — Indecision candlestick.\n"
+        "Open and close are nearly equal; reflects balance between buyers and sellers.\n"
+        "Context matters: at tops or bottoms it can signal a reversal."
+    ),
+    "bullish engulfing": (
+        "Bullish Engulfing — Bullish reversal pattern (2 candles).\n"
+        "A large bullish candle fully engulfs the prior smaller bearish candle.\n"
+        "Signals strong buying pressure overwhelming sellers."
+    ),
+    "bearish engulfing": (
+        "Bearish Engulfing — Bearish reversal pattern (2 candles).\n"
+        "A large bearish candle fully engulfs the prior smaller bullish candle.\n"
+        "Signals strong selling pressure overwhelming buyers."
+    ),
+    "morning star": (
+        "Morning Star — Bullish reversal pattern (3 candles).\n"
+        "Large bearish candle, small-bodied candle (gap down), large bullish candle.\n"
+        "Signals a shift from sellers to buyers at a potential bottom."
+    ),
+    "evening star": (
+        "Evening Star — Bearish reversal pattern (3 candles).\n"
+        "Large bullish candle, small-bodied candle (gap up), large bearish candle.\n"
+        "Signals a shift from buyers to sellers at a potential top."
+    ),
+    "cup and handle": (
+        "Cup and Handle — Bullish continuation pattern.\n"
+        "Rounded 'U'-shaped base followed by a brief pullback (handle).\n"
+        "Breakout above handle resistance targets a move equal to the cup depth."
+    ),
+}
+
+_SIGNAL_TYPE_LABELS = {
+    "day": ("Day Trade", "Scanning for high-probability day trade setups..."),
+    "swing": ("Swing Trade", "Scanning for swing trade candidates (2-3 week holds)..."),
+    "scalp": ("Scalp Trade", "Scanning for short-term scalp opportunities..."),
+}
 
 
 def _safe_text(text: str) -> str:
@@ -254,7 +431,66 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         await update.message.reply_text(_HELP_TEXT)
 
     async def _patterns_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.message.reply_text(_PATTERNS_TEXT)
+        """Handle /patterns [list|bullish|bearish|explain <name>] command."""
+        args = context.args or []
+        sub = args[0].lower() if args else ""
+
+        if not sub or sub == "list":
+            await update.message.reply_text(_PATTERNS_TEXT)
+            return
+
+        if sub == "bullish":
+            patterns = [p for p in _KNOWN_PATTERNS if p in _BULLISH_PATTERNS]
+            lines = ["Bullish Chart Patterns:\n"] + [f"  - {p}" for p in patterns]
+            lines.append("\nUse /scan <pattern> to scan the market.")
+            await update.message.reply_text("\n".join(lines))
+            return
+
+        if sub == "bearish":
+            patterns = [p for p in _KNOWN_PATTERNS if p in _BEARISH_PATTERNS]
+            lines = ["Bearish Chart Patterns:\n"] + [f"  - {p}" for p in patterns]
+            lines.append("\nUse /scan <pattern> to scan the market.")
+            await update.message.reply_text("\n".join(lines))
+            return
+
+        if sub == "explain":
+            pattern_name = " ".join(args[1:]).strip().lower() if len(args) > 1 else ""
+            if not pattern_name:
+                await update.message.reply_text(
+                    "Usage: /patterns explain <pattern name>\n"
+                    "Example: /patterns explain double bottom\n\n"
+                    "Use /patterns list to see all supported patterns."
+                )
+                return
+            if pattern_name not in _KNOWN_PATTERNS:
+                await update.message.reply_text(
+                    f"Unknown pattern: '{pattern_name}'\n"
+                    "Use /patterns list to see all supported patterns."
+                )
+                return
+            description = _PATTERN_DESCRIPTIONS.get(
+                pattern_name,
+                f"{pattern_name.title()} — Recognized by Momentum Radar scanner.\n"
+                f"Use /scan {pattern_name} to find current market examples.",
+            )
+            await update.message.reply_text(description)
+            return
+
+        if sub == "scan":
+            pattern_name = " ".join(args[1:]).strip().lower() if len(args) > 1 else ""
+            await _run_scan(update, context, pattern_name)
+            return
+
+        # Unknown subcommand — show help
+        await update.message.reply_text(
+            "Usage:\n"
+            "  /patterns          – list all patterns\n"
+            "  /patterns list     – list all patterns\n"
+            "  /patterns bullish  – bullish patterns only\n"
+            "  /patterns bearish  – bearish patterns only\n"
+            "  /patterns explain <name> – explain a specific pattern\n"
+            "  /patterns scan <name>    – scan the market for a pattern"
+        )
 
     async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
@@ -333,8 +569,29 @@ async def start_telegram_bot() -> None:  # pragma: no cover
             await _run_scan(update, context, text)
 
     async def _options_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        ticker = " ".join(context.args).strip().upper() if context.args else ""
-        await _options_handler_impl(update, context, ticker)
+        """Handle /options [TICKER | sweep | flow TICKER | maxpain TICKER | iv TICKER | pcr TICKER]."""
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(_OPTIONS_MENU_TEXT)
+            return
+        sub = args[0].lower()
+        if sub == "sweep":
+            await _unusual_handler_impl(update, context)
+        elif sub == "flow":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _flow_handler_impl(update, context, ticker)
+        elif sub == "maxpain":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _maxpain_handler_impl(update, context, ticker)
+        elif sub == "iv":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _iv_handler_impl(update, context, ticker)
+        elif sub == "pcr":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _pcr_handler_impl(update, context, ticker)
+        else:
+            ticker = " ".join(args).strip().upper()
+            await _options_handler_impl(update, context, ticker)
 
     async def _flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
@@ -389,8 +646,18 @@ async def start_telegram_bot() -> None:  # pragma: no cover
         await _dates_handler_impl(update, context)
 
     async def _fundamentals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        ticker = " ".join(context.args).strip().upper() if context.args else ""
-        await _fundamentals_handler_impl(update, context, ticker)
+        """Handle /fundamentals [TICKER | earnings TICKER]."""
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(_FUNDAMENTALS_MENU_TEXT)
+            return
+        sub = args[0].lower()
+        if sub == "earnings":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _earnings_handler_impl(update, context, ticker)
+        else:
+            ticker = " ".join(args).strip().upper()
+            await _fundamentals_handler_impl(update, context, ticker)
 
     async def _earnings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
@@ -411,6 +678,81 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     async def _tradingview_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ticker = " ".join(context.args).strip().upper() if context.args else ""
         await _tradingview_handler_impl(update, context, ticker)
+
+    async def _signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /signals [day|swing|scalp|scan TICKER]."""
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(_SIGNALS_MENU_TEXT)
+            return
+        sub = args[0].lower()
+        if sub == "scan":
+            ticker = args[1].strip().upper() if len(args) > 1 else ""
+            await _analyze_handler_impl(update, context, ticker)
+        elif sub in ("day", "swing", "scalp"):
+            # Map signal type to a premarket scan filtered by strategy type
+            await _signals_scan_impl(update, context, sub)
+        else:
+            await update.message.reply_text(
+                "Usage:\n"
+                "  /signals day           – day trade signals\n"
+                "  /signals swing         – swing trade signals\n"
+                "  /signals scalp         – scalp trade signals\n"
+                "  /signals scan <TICKER> – full analysis for a ticker"
+            )
+
+    async def _signals_scan_impl(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, signal_type: str
+    ) -> None:
+        """Run a volume + squeeze scan and label it by signal type."""
+        label, wait_msg = _SIGNAL_TYPE_LABELS[signal_type]
+        await update.message.reply_text(wait_msg + " This may take a moment.")
+        loop = asyncio.get_event_loop()
+        try:
+            from momentum_radar.premarket.scanner import (
+                scan_unusual_volume,
+                scan_most_active,
+            )
+            vol_spikes = await loop.run_in_executor(
+                None, lambda: scan_unusual_volume(universe, fetcher, top_n=10)
+            )
+            active = await loop.run_in_executor(
+                None, lambda: scan_most_active(universe, fetcher, top_n=10)
+            )
+        except Exception as exc:
+            logger.error("Signals scan failed for %s: %s", signal_type, exc)
+            await update.message.reply_text("Signal scan failed. Please try again later.")
+            return
+
+        lines = [f"{label} Signal Scan", ""]
+        lines.append("High Volume Movers (RVOL >= 2x):")
+        if vol_spikes:
+            for s in vol_spikes[:7]:
+                direction = "+" if s["pct_change"] >= 0 else ""
+                lines.append(
+                    f"  {s['ticker']:6s}  RVOL {s['rvol']:.1f}x  "
+                    f"{direction}{s['pct_change']:.1f}%  ${s['last_close']:.2f}"
+                )
+        else:
+            lines.append("  None detected.")
+        lines.append("")
+        lines.append("Top Gainers:")
+        for g in active.get("top_gainers", [])[:5]:
+            lines.append(f"  {g['ticker']:6s}  +{g['pct_change']:.1f}%  ${g['last_close']:.2f}")
+        lines.append("")
+        lines.append(f"Use /analyze <TICKER> for a full {label.lower()} setup on any candidate.")
+        lines.append("Use /options sweep for unusual options activity on these names.")
+
+        msg = _safe_text("\n".join(lines))
+        await update.message.reply_text(msg)
+
+    async def _settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /settings — show and configure alert preferences."""
+        await _alerts_handler_impl(update, context)
+
+    async def _tutorial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /tutorial — step-by-step guide for new users."""
+        await update.message.reply_text(_TUTORIAL_TEXT)
 
     async def _heatmap_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _heatmap_handler_impl(update, context)
@@ -1562,6 +1904,7 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("patterns", _patterns_handler))
     app.add_handler(CommandHandler("status", _status_handler))
     app.add_handler(CommandHandler("scan", _scan_command_handler))
+    app.add_handler(CommandHandler("signals", _signals_handler))
     app.add_handler(CommandHandler("options", _options_handler))
     app.add_handler(CommandHandler("flow", _flow_handler))
     app.add_handler(CommandHandler("unusual", _unusual_handler))
@@ -1585,6 +1928,8 @@ async def start_telegram_bot() -> None:  # pragma: no cover
     app.add_handler(CommandHandler("demand", _demand_handler))
     app.add_handler(CommandHandler("tradingview", _tradingview_handler))
     app.add_handler(CommandHandler("alerts", _alerts_handler))
+    app.add_handler(CommandHandler("settings", _settings_handler))
+    app.add_handler(CommandHandler("tutorial", _tutorial_handler))
     app.add_handler(CommandHandler("heatmap", _heatmap_handler))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _message_handler)
