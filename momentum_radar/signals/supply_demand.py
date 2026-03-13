@@ -78,6 +78,8 @@ class SupplyDemandZone:
         impulse_magnitude:   Size of the originating impulse in ATR multiples.
         volume_expansion:    Volume ratio during impulse vs. average.
         creation_bar_index:  Index of the base start bar in the source DataFrame.
+        base_range:          Range of the base in price units (stored for rescoring).
+        atr:                 ATR at detection time (stored for rescoring).
     """
 
     ticker: str
@@ -91,6 +93,8 @@ class SupplyDemandZone:
     impulse_magnitude: float = 0.0
     volume_expansion: float = 0.0
     creation_bar_index: int = 0
+    base_range: float = 0.0
+    atr: float = 1.0
 
     @property
     def mid_price(self) -> float:
@@ -200,6 +204,8 @@ def _detect_zones(
                                     impulse_magnitude=round(impulse_move_up / atr, 2),
                                     volume_expansion=round(vol_ratio, 2),
                                     creation_bar_index=base_start,
+                                    base_range=base_range,
+                                    atr=atr,
                                 )
                             )
                             break  # Found a valid demand base at this position
@@ -237,6 +243,8 @@ def _detect_zones(
                                     impulse_magnitude=round(impulse_move_dn / atr, 2),
                                     volume_expansion=round(vol_ratio, 2),
                                     creation_bar_index=base_start,
+                                    base_range=base_range,
+                                    atr=atr,
                                 )
                             )
                             break
@@ -382,14 +390,14 @@ def _update_zone_lifecycle(
             else:
                 zone.status = "fresh"
 
-        # Refresh score with updated touch count
+        # Refresh score with updated touch count, using original base_range and atr
         if zone.status != "broken":
             zone.strength_score = round(
                 _compute_score(
                     impulse_magnitude=zone.impulse_magnitude,
                     volume_expansion=zone.volume_expansion,
-                    base_range=0.0,  # already factored in at creation
-                    atr=1.0,
+                    base_range=zone.base_range,
+                    atr=zone.atr if zone.atr > 0 else 1.0,  # 1.0 is a neutral unit-ATR fallback
                     touch_count=zone.touch_count,
                     status=zone.status,
                     timeframe=zone.timeframe,
@@ -421,6 +429,15 @@ def detect_zones(
     """
     all_zones: List[SupplyDemandZone] = []
 
+    # --- Defensive DatetimeIndex guard ---
+    if daily is not None and not isinstance(daily.index, pd.DatetimeIndex):
+        logger.warning(
+            "%s: daily DataFrame index is %s, not DatetimeIndex – "
+            "weekly resample will be skipped. Reset the index before calling detect_zones.",
+            ticker,
+            type(daily.index).__name__,
+        )
+
     # --- Daily zones ---
     if daily is not None and len(daily) >= 15:
         atr = compute_atr(daily) or 0.0
@@ -429,7 +446,7 @@ def detect_zones(
             all_zones += _detect_zones(daily, atr, ticker, "daily", avg_vol)
 
     # --- Weekly zones (aggregate daily to weekly) ---
-    if daily is not None and len(daily) >= 30:
+    if daily is not None and len(daily) >= 30 and isinstance(daily.index, pd.DatetimeIndex):
         try:
             weekly = daily.resample("W").agg(
                 {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
@@ -444,22 +461,40 @@ def detect_zones(
 
     # --- Intraday zones (1H, 15M, 5M) from 1-min bars ---
     if bars is not None and not bars.empty and len(bars) >= 30:
-        for tf_label, rule in [("1h", "1h"), ("15m", "15min"), ("5m", "5min")]:
-            try:
-                tf_df = bars.resample(rule).agg(
-                    {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-                ).dropna()
-                if len(tf_df) >= 10:
-                    atr_tf = compute_atr(tf_df) or 0.0
-                    avg_vol_tf = float(tf_df["volume"].mean()) if "volume" in tf_df.columns else 0.0
-                    if atr_tf > 0:
-                        all_zones += _detect_zones(tf_df, atr_tf, ticker, tf_label, avg_vol_tf)
-            except Exception as exc:
-                logger.debug("Intraday %s resample failed for %s: %s", tf_label, ticker, exc)
+        if not isinstance(bars.index, pd.DatetimeIndex):
+            logger.warning(
+                "%s: intraday bars index is %s, not DatetimeIndex – "
+                "intraday resamples will be skipped.",
+                ticker,
+                type(bars.index).__name__,
+            )
+        else:
+            for tf_label, rule in [("1h", "1h"), ("15m", "15min"), ("5m", "5min")]:
+                try:
+                    tf_df = bars.resample(rule).agg(
+                        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+                    ).dropna()
+                    if len(tf_df) >= 10:
+                        atr_tf = compute_atr(tf_df) or 0.0
+                        avg_vol_tf = float(tf_df["volume"].mean()) if "volume" in tf_df.columns else 0.0
+                        if atr_tf > 0:
+                            all_zones += _detect_zones(tf_df, atr_tf, ticker, tf_label, avg_vol_tf)
+                except Exception as exc:
+                    logger.debug("Intraday %s resample failed for %s: %s", tf_label, ticker, exc)
 
     # Filter by minimum score and deduplicate across timeframes
     filtered = [z for z in all_zones if z.strength_score >= min_score and z.status != "broken"]
     filtered.sort(key=lambda z: z.strength_score, reverse=True)
+
+    logger.info(
+        "%s zones found: total=%d supply=%d demand=%d top_scores=%s",
+        ticker,
+        len(filtered),
+        sum(z.zone_type == "supply" for z in filtered),
+        sum(z.zone_type == "demand" for z in filtered),
+        [z.strength_score for z in filtered[:5]],
+    )
+
     return filtered
 
 

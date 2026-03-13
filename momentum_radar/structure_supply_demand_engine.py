@@ -143,6 +143,24 @@ def scan_ticker(
     if daily is None or daily.empty:
         return result
 
+    # ---- Observability: log data quality and ATR before detection ----
+    logger.info(
+        "%s daily rows=%d index=%s cols=%s",
+        ticker,
+        len(daily),
+        type(daily.index).__name__,
+        list(daily.columns),
+    )
+    if "volume" in daily.columns:
+        logger.info(
+            "%s daily vol_mean=%.0f vol_zero_pct=%.1f%%",
+            ticker,
+            float(daily["volume"].mean()),
+            float((daily["volume"] == 0).mean()) * 100,  # fraction → percentage
+        )
+    _atr_diag = compute_atr(daily)
+    logger.info("%s daily atr=%s", ticker, _atr_diag)
+
     # ---- Detect zones ----
     zones = detect_zones(ticker, daily, bars, min_score=_MIN_REPORT_SCORE)
 
@@ -154,6 +172,16 @@ def scan_ticker(
             logger.debug("Zone upsert skipped for %s: %s", ticker, exc)
 
     result["all_zones"] = zones
+
+    # ---- Observability: zone count breakdown ----
+    logger.info(
+        "%s zones after filter: total=%d supply=%d demand=%d top_scores=%s",
+        ticker,
+        len(zones),
+        sum(z.zone_type == "supply" for z in zones),
+        sum(z.zone_type == "demand" for z in zones),
+        [z.strength_score for z in zones[:5]],
+    )
 
     if not zones:
         return result

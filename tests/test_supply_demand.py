@@ -551,3 +551,164 @@ class TestZoneStore:
 
         result = load_zones("NONEXISTENT")
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle rescoring bug fix
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleRescoring:
+    """Verify that _update_zone_lifecycle uses stored base_range/atr, not hardcoded values."""
+
+    def test_rescoring_uses_stored_base_range_and_atr(self):
+        """After lifecycle update, a zone should NOT have inflated tightness pts
+        from base_range=0.0/atr=1.0 defaults."""
+        from momentum_radar.signals.supply_demand import (
+            SupplyDemandZone,
+            _compute_score,
+            _update_zone_lifecycle,
+        )
+
+        # Create a zone with a real base_range and atr
+        base_range = 0.5
+        atr = 1.0
+        zone = SupplyDemandZone(
+            ticker="T",
+            timeframe="daily",
+            zone_type="demand",
+            zone_high=101.0,
+            zone_low=100.5,
+            strength_score=99.0,  # arbitrary initial value, will be recalculated by lifecycle update
+            touch_count=0,
+            status="fresh",
+            impulse_magnitude=2.0,
+            volume_expansion=1.5,
+            creation_bar_index=0,
+            base_range=base_range,
+            atr=atr,
+        )
+
+        # Build a minimal DataFrame with no price inside the zone so touch_count stays 0
+        rng = pd.date_range("2024-01-01", periods=5, freq="B")
+        df = pd.DataFrame(
+            {
+                "open": [105.0] * 5,
+                "high": [106.0] * 5,
+                "low": [104.0] * 5,
+                "close": [105.0] * 5,
+                "volume": [1_000_000.0] * 5,
+            },
+            index=rng,
+        )
+
+        _update_zone_lifecycle([zone], df)
+
+        # Score after lifecycle must equal what _compute_score would produce
+        # with the *original* base_range and atr (not 0.0/1.0 hardcoded)
+        expected = round(
+            _compute_score(
+                impulse_magnitude=2.0,
+                volume_expansion=1.5,
+                base_range=base_range,
+                atr=atr,
+                touch_count=zone.touch_count,
+                status=zone.status,
+                timeframe="daily",
+            ),
+            1,
+        )
+        assert zone.strength_score == expected
+
+    def test_rescoring_with_zero_base_range_would_inflate(self):
+        """Demonstrate that base_range=0.0 with atr=1.0 gives max tightness pts (15),
+        while using the real base_range gives a lower tightness contribution."""
+        from momentum_radar.signals.supply_demand import _compute_score
+
+        # With real base_range (non-zero), tightness_pts < 15
+        score_real = _compute_score(
+            impulse_magnitude=2.0,
+            volume_expansion=1.5,
+            base_range=0.5,
+            atr=1.0,
+            touch_count=0,
+            status="fresh",
+            timeframe="daily",
+        )
+        # With hardcoded base_range=0.0 (old bug), tightness_pts = 15 (max)
+        score_inflated = _compute_score(
+            impulse_magnitude=2.0,
+            volume_expansion=1.5,
+            base_range=0.0,
+            atr=1.0,
+            touch_count=0,
+            status="fresh",
+            timeframe="daily",
+        )
+        assert score_inflated > score_real, (
+            "base_range=0.0 should produce a higher (inflated) score than base_range=0.5"
+        )
+
+    def test_zone_dataclass_stores_base_range_and_atr(self):
+        """SupplyDemandZone should store base_range and atr fields."""
+        from momentum_radar.signals.supply_demand import SupplyDemandZone
+
+        zone = SupplyDemandZone(
+            ticker="T",
+            timeframe="daily",
+            zone_type="supply",
+            zone_high=110.0,
+            zone_low=108.0,
+            strength_score=65.0,
+            base_range=0.8,
+            atr=2.5,
+        )
+        assert zone.base_range == pytest.approx(0.8)
+        assert zone.atr == pytest.approx(2.5)
+
+    def test_detect_zones_populates_base_range_and_atr(self):
+        """Zones produced by detect_zones should have non-default base_range/atr."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily()
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        demand_zones = [z for z in zones if z.zone_type == "demand"]
+        assert len(demand_zones) >= 1
+        zone = demand_zones[0]
+        # atr should be > 0 (real value from compute_atr) and base_range >= 0
+        assert zone.atr > 0
+        assert zone.base_range >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# DatetimeIndex guard
+# ---------------------------------------------------------------------------
+
+
+class TestDatetimeIndexGuard:
+    def test_non_datetime_index_daily_skips_weekly_resample(self, caplog):
+        """detect_zones should warn and skip weekly resample when index is not DatetimeIndex."""
+        import logging
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily(n=60)
+        # Reset index to integer — breaks resample
+        daily_int = daily.reset_index(drop=True)
+
+        with caplog.at_level(logging.WARNING, logger="momentum_radar.signals.supply_demand"):
+            zones = detect_zones("TEST", daily_int, min_score=0.0)
+
+        assert isinstance(zones, list)
+        assert any("DatetimeIndex" in r.message for r in caplog.records), (
+            "Expected a warning about non-DatetimeIndex for daily bars"
+        )
+
+    def test_datetime_index_daily_includes_weekly(self):
+        """With a proper DatetimeIndex, weekly resample should run without errors."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily(n=80)
+        assert isinstance(daily.index, pd.DatetimeIndex)
+        # Should not raise and should return a list
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        assert isinstance(zones, list)
