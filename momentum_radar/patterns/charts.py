@@ -92,7 +92,7 @@ def generate_pattern_chart(
     else:
         title = f"{ticker} - {pattern_name} (Confidence: {confidence}%)"
 
-    # Build alines for trendlines (list of line segments)
+    # Build alines for trendlines (yellow dashed – consistent with support/resistance style)
     alines_list = []
     aline_colors = []
     for line_seg in lines:
@@ -103,7 +103,7 @@ def generate_pattern_chart(
                 ts = pd.Timestamp(pt[0])
                 pts.append((ts, float(pt[1])))
             alines_list.append(pts)
-            aline_colors.append("cyan")
+            aline_colors.append("yellow")
 
     # Build scatter markers for key points
     addplots = []
@@ -175,10 +175,12 @@ def generate_pattern_chart(
         fd, output_path = tempfile.mkstemp(suffix=".png", prefix=f"chart_{ticker}_")
         os.close(fd)
 
-    # Use nightclouds dark style
+    # Pure black background with green/red candles and yellow pattern overlays
     style = mpf.make_mpf_style(
         base_mpf_style="nightclouds",
-        rc={"axes.titlesize": 10, "axes.titlecolor": "white"},
+        facecolor="#000000",
+        rc={"axes.titlesize": 10, "axes.titlecolor": "white", "axes.facecolor": "#000000",
+            "figure.facecolor": "#000000"},
     )
 
     fig_kwargs: Dict = dict(
@@ -193,7 +195,7 @@ def generate_pattern_chart(
     if addplots:
         fig_kwargs["addplot"] = addplots
     if alines_list:
-        fig_kwargs["alines"] = dict(alines=alines_list, colors=aline_colors, linewidths=1.5)
+        fig_kwargs["alines"] = dict(alines=alines_list, colors=aline_colors, linewidths=1.5, linestyle="--")
 
     try:
         fig, axes = mpf.plot(plot_df, **fig_kwargs)
@@ -281,7 +283,7 @@ def generate_pattern_chart(
                         va="top",
                     )
 
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#000000")
         plt.close(fig)
     except Exception as exc:
         logger.error("Failed to generate chart for %s: %s", ticker, exc)

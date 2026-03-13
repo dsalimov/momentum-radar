@@ -976,3 +976,132 @@ def evaluate(
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Pattern confirmation helper (used by pattern scan alerter)
+# ---------------------------------------------------------------------------
+
+def get_pattern_confirmations(
+    ticker: str,
+    bars: Optional[pd.DataFrame],
+    daily: Optional[pd.DataFrame],
+    direction: str = "BULLISH",
+) -> tuple:
+    """Validate a detected chart pattern against volume, MA, and ATR context.
+
+    Professional traders never act on a pattern alone.  This helper checks
+    three independent filters that must align before a pattern signal is sent:
+
+    1. **Volume** – today's volume vs. 20-day average (above = confirming).
+    2. **MA position** – price relative to the 50-day moving average.
+    3. **ATR expansion** – short-term ATR vs. longer-term ATR to detect
+       whether volatility is contracting or expanding into the move.
+
+    A signal is considered **confirmed** when at least 2 of the 3 filters
+    align with the stated direction.
+
+    Args:
+        ticker:    Stock symbol (for logging only).
+        bars:      Intraday OHLCV DataFrame (best-effort; may be None).
+        daily:     Daily OHLCV DataFrame (≥ 30 bars recommended).
+        direction: ``"BULLISH"`` or ``"BEARISH"`` (case-insensitive).
+
+    Returns:
+        Tuple of:
+
+        - ``confirmed`` (bool) – ``True`` when ≥ 2 checks align.
+        - ``tags`` (list[str]) – brief human-readable labels, e.g.
+          ``["Volume ↑", "Below 50MA", "ATR expanding"]``.
+    """
+    if daily is None or len(daily) < 20:
+        return False, []
+
+    direction_upper = direction.upper()
+    tags: List[str] = []
+    aligned: int = 0  # count of confirmations that agree with direction
+
+    closes = daily["close"]
+    last_close = float(closes.iloc[-1])
+
+    # ------------------------------------------------------------------
+    # 1. Volume: today vs. 20-day average
+    # ------------------------------------------------------------------
+    try:
+        if "volume" in daily.columns:
+            avg_vol_20 = float(daily["volume"].iloc[-21:-1].mean()) if len(daily) >= 21 else 0.0
+            # Prefer intraday cumulative volume when available
+            if bars is not None and not bars.empty and "volume" in bars.columns:
+                today_vol = float(bars["volume"].sum())
+            else:
+                today_vol = float(daily["volume"].iloc[-1])
+
+            if avg_vol_20 > 0:
+                vol_ratio = today_vol / avg_vol_20
+                rising = vol_ratio >= 1.10   # at least 10% above average
+                tags.append(f"Volume {'↑' if rising else '↓'} ({vol_ratio:.1f}x)")
+                # Volume spike always confirms directional move regardless of side
+                if rising:
+                    aligned += 1
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # 2. MA position: price vs. 50-day and 20-day moving averages
+    # ------------------------------------------------------------------
+    try:
+        if len(daily) >= 50:
+            ma50 = float(closes.iloc[-50:].mean())
+            ma20 = float(closes.iloc[-20:].mean())
+            above_50 = last_close > ma50
+            above_20 = last_close > ma20
+
+            if direction_upper == "BULLISH":
+                if above_50:
+                    tags.append("Above 50MA")
+                    aligned += 1
+                else:
+                    tags.append("Below 50MA")
+                if not above_20:
+                    tags.append("Below 20MA")
+            else:  # BEARISH
+                if not above_50:
+                    tags.append("Below 50MA")
+                    aligned += 1
+                else:
+                    tags.append("Above 50MA")
+                if above_20:
+                    tags.append("Above 20MA")
+        elif len(daily) >= 20:
+            ma20 = float(closes.iloc[-20:].mean())
+            above_20 = last_close > ma20
+            if direction_upper == "BULLISH" and above_20:
+                tags.append("Above 20MA")
+                aligned += 1
+            elif direction_upper == "BEARISH" and not above_20:
+                tags.append("Below 20MA")
+                aligned += 1
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # 3. ATR expansion: 7-day ATR vs. 20-day ATR
+    # ------------------------------------------------------------------
+    try:
+        from momentum_radar.utils.indicators import compute_atr
+        atr_short = compute_atr(daily, period=7)
+        atr_long = compute_atr(daily, period=20)
+        if atr_short and atr_long and atr_long > 0:
+            expanding = atr_short >= atr_long * 0.95  # expanding or at par
+            tags.append(f"ATR {'expanding' if expanding else 'contracting'}")
+            if expanding:
+                aligned += 1
+    except Exception:
+        pass
+
+    confirmed = aligned >= 2
+    logger.debug(
+        "Pattern confirmations for %s (%s): aligned=%d/%d confirmed=%s tags=%s",
+        ticker, direction_upper, aligned, 3, confirmed, tags,
+    )
+    return confirmed, tags
