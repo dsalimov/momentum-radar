@@ -38,7 +38,8 @@ class TradeParameters:
     Attributes:
         entry:   Suggested entry price.
         stop:    Stop-loss price.
-        target:  Take-profit price.
+        target:  Primary take-profit price.
+        target2: Secondary take-profit price (swing strategies only; 0 = not set).
         rr:      Computed risk-to-reward ratio.
         valid:   True if R:R meets the strategy minimum.
     """
@@ -46,6 +47,7 @@ class TradeParameters:
     entry: float
     stop: float
     target: float
+    target2: float
     rr: float
     valid: bool
 
@@ -88,6 +90,8 @@ def compute_trade_params(
             target = float(resistance)
         else:
             target = entry + risk * min_rr
+        # Second target: one extra risk unit beyond target1 for multi-target strategies
+        target2 = entry + risk * (min_rr + 1.0) if strategy in ("swing", "chart_pattern") else 0.0
     else:
         # Short trade – stop above entry
         atr_value = (atr * atr_mult) if atr else entry * 0.01
@@ -97,6 +101,7 @@ def compute_trade_params(
             target = float(resistance)
         else:
             target = entry - risk * min_rr
+        target2 = entry - risk * (min_rr + 1.0) if strategy in ("swing", "chart_pattern") else 0.0
 
     rr = compute_risk_reward(entry, stop, target) or 0.0
     valid = rr >= min_rr
@@ -105,6 +110,7 @@ def compute_trade_params(
         entry=round(entry, 2),
         stop=round(stop, 2),
         target=round(target, 2),
+        target2=round(target2, 2),
         rr=round(rr, 2),
         valid=valid,
     )
