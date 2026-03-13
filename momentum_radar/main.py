@@ -563,12 +563,14 @@ def _scan_setups(
             try:
                 chart_path: Optional[str] = None
                 from momentum_radar.ui.chart_renderer import render_trade_setup_chart
-                chart_bars = bars if bars is not None and not (
-                    hasattr(bars, "empty") and bars.empty
-                ) else bars_1h
-                if chart_bars is not None and not (
-                    hasattr(chart_bars, "empty") and chart_bars.empty
-                ):
+
+                def _has_data(df_arg) -> bool:
+                    return df_arg is not None and not (
+                        hasattr(df_arg, "empty") and df_arg.empty
+                    )
+
+                chart_bars = bars if _has_data(bars) else bars_1h
+                if _has_data(chart_bars):
                     chart_path = render_trade_setup_chart(setup, chart_bars)
             except Exception as chart_exc:
                 logger.debug("Chart generation skipped for %s: %s", ticker, chart_exc)
@@ -788,26 +790,29 @@ def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
             continue
 
         # Calculate trade parameters
+        # Prefer the pattern's own measured levels; fall back to ATR multiples
         atr_val = 0.0
-        entry = stop = target = 0.0
+        current_price = 0.0
         try:
             if daily_ctx is not None and not daily_ctx.empty:
                 atr_val = compute_atr(daily_ctx) or 0.0
-                entry = float(daily_ctx["close"].iloc[-1])
+                current_price = float(daily_ctx["close"].iloc[-1])
         except Exception:
             pass
 
         direction_upper = direction.upper()
-        if atr_val > 0 and entry > 0 and breakout_level:
-            if direction_upper == "BEARISH":
-                stop = entry + atr_val * 1.5
-                target = entry - atr_val * 3.0
-            else:
-                stop = entry - atr_val * 1.5
-                target = entry + atr_val * 3.0
-        else:
-            stop = entry
-            target = entry
+        # Entry = at the neckline (limit order waiting for breakout confirmation)
+        entry = float(breakout_level) if breakout_level else current_price
+
+        # Use pattern's own stop/target when available (most accurate)
+        stop = match.get("stop_level") or 0.0
+        target = match.get("target_level") or 0.0
+
+        # Fall back to ATR multiples when pattern doesn't supply levels
+        if not stop and atr_val > 0 and current_price > 0:
+            stop = current_price + atr_val * 1.5 if direction_upper == "BEARISH" else current_price - atr_val * 1.5
+        if not target and atr_val > 0 and current_price > 0:
+            target = current_price - atr_val * 3.0 if direction_upper == "BEARISH" else current_price + atr_val * 3.0
 
         # Format the simplified 4–5 line alert
         msg = format_pattern_signal_alert(
@@ -816,9 +821,9 @@ def _run_pattern_scan(pattern_name: str, tickers_arg: Optional[str]) -> None:
             confidence=float(confidence),
             direction=direction_upper,
             entry=entry,
-            stop=stop,
-            target=target,
-            breakout=float(breakout_level) if breakout_level else entry,
+            stop=float(stop) if stop else entry,
+            target=float(target) if target else entry,
+            breakout=entry,
             atr=atr_val,
             confirmations=conf_tags,
         )

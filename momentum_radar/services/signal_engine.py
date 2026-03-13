@@ -1029,7 +1029,7 @@ def get_pattern_confirmations(
     # ------------------------------------------------------------------
     try:
         if "volume" in daily.columns:
-            avg_vol_20 = float(daily["volume"].iloc[-21:-1].mean()) if len(daily) >= 21 else 0.0
+            avg_vol_20 = float(daily["volume"].iloc[-21:-1].mean()) if len(daily) > 21 else 0.0
             # Prefer intraday cumulative volume when available
             if bars is not None and not bars.empty and "volume" in bars.columns:
                 today_vol = float(bars["volume"].sum())

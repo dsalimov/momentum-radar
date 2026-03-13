@@ -69,6 +69,7 @@ def _make_result(
         "pattern_type": "candlestick",
         "confidence": round(confidence, 1),
         "bias": bias,
+        "direction": bias.upper(),  # "BULLISH" | "BEARISH" — normalised for alert formatter
         "key_points": key_points,
         "lines": [],
         "candle_indices": candle_indices,

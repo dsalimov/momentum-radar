@@ -47,8 +47,14 @@ PatternResult = Dict                           # {"pattern", "confidence", "key_
 # Constants
 # ---------------------------------------------------------------------------
 
-PATTERN_LOOKBACK = 60  # use only the last 60 candles for detection
+PATTERN_LOOKBACK = 90  # use last 90 candles — better coverage for swing patterns
 FLAG_WIDTH_THRESHOLD = 0.05  # max flag channel width as fraction of pole top price
+
+# Tolerance knobs for real-world pattern detection
+_DT_SPREAD_MAX = 0.05        # Double Top/Bottom: peaks/troughs within 5 % of each other
+_DT_BAR_MIN = 7              # Double Top/Bottom: minimum bars between pivots
+_DT_BAR_MAX = 60             # Double Top/Bottom: maximum bars between pivots (extended)
+_HS_SHOULDER_SYM_MAX = 0.08  # Head & Shoulders: shoulder price symmetry tolerance
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +630,7 @@ def _detect_bull_flag(df: pd.DataFrame) -> Optional[PatternResult]:
                 "breakout_level_upper": round(breakout_upper, 4),
                 "breakout_level_lower": round(breakout_lower, 4),
                 "distance_to_breakout": round(distance_to_breakout, 4),
+                "_pole_height": round(float(close[pole_end]) - float(close[pole_start]), 4),
                 "lines": [
                     [(df.index[consol_start], chan_high), (df.index[-1], chan_high)],
                     [(df.index[consol_start], chan_low), (df.index[-1], chan_low)],
@@ -755,6 +762,7 @@ def _detect_bear_flag(df: pd.DataFrame) -> Optional[PatternResult]:
                 "breakout_level_upper": round(breakout_upper, 4),
                 "breakout_level_lower": round(breakout_lower, 4),
                 "distance_to_breakout": round(distance_to_breakout, 4),
+                "_pole_height": round(float(close[pole_start]) - float(close[pole_end]), 4),
                 "lines": [
                     [(df.index[consol_start], chan_high), (df.index[-1], chan_high)],
                     [(df.index[consol_start], chan_low), (df.index[-1], chan_low)],
@@ -794,7 +802,7 @@ def _detect_double_bottom(df: pd.DataFrame) -> Optional[PatternResult]:
         for i in range(j - 1, -1, -1):
             idx1, idx2 = pivot_lows[i], pivot_lows[j]
             bar_distance = idx2 - idx1
-            if not (7 <= bar_distance <= 30):
+            if not (_DT_BAR_MIN <= bar_distance <= _DT_BAR_MAX):
                 continue
 
             trough1 = float(low[idx1])
@@ -803,7 +811,7 @@ def _detect_double_bottom(df: pd.DataFrame) -> Optional[PatternResult]:
             if avg_trough <= 0:
                 continue
             spread = abs(trough1 - trough2) / avg_trough
-            if spread > 0.03:
+            if spread > _DT_SPREAD_MAX:
                 continue
 
             neckline = float(np.max(high[idx1:idx2 + 1]))
@@ -899,7 +907,7 @@ def _detect_double_top(df: pd.DataFrame) -> Optional[PatternResult]:
         for i in range(j - 1, -1, -1):
             idx1, idx2 = pivot_highs[i], pivot_highs[j]
             bar_distance = idx2 - idx1
-            if not (7 <= bar_distance <= 30):
+            if not (_DT_BAR_MIN <= bar_distance <= _DT_BAR_MAX):
                 continue
 
             peak1 = float(high[idx1])
@@ -908,7 +916,7 @@ def _detect_double_top(df: pd.DataFrame) -> Optional[PatternResult]:
             if avg_peak <= 0:
                 continue
             spread = abs(peak1 - peak2) / avg_peak
-            if spread > 0.03:
+            if spread > _DT_SPREAD_MAX:
                 continue
 
             neckline = float(np.min(low[idx1:idx2 + 1]))
@@ -1018,7 +1026,7 @@ def _detect_head_and_shoulders(df: pd.DataFrame) -> Optional[PatternResult]:
                 if shoulder_avg <= 0:
                     continue
                 shoulder_sym = abs(ls_price - rs_price) / shoulder_avg
-                if shoulder_sym > 0.05:
+                if shoulder_sym > _HS_SHOULDER_SYM_MAX:
                     continue
 
                 lhs_trough = float(np.min(low[ls_idx:head_idx + 1]))
@@ -1135,7 +1143,7 @@ def _detect_inverse_head_and_shoulders(df: pd.DataFrame) -> Optional[PatternResu
                 if shoulder_avg <= 0:
                     continue
                 shoulder_sym = abs(ls_price - rs_price) / shoulder_avg
-                if shoulder_sym > 0.05:
+                if shoulder_sym > _HS_SHOULDER_SYM_MAX:
                     continue
 
                 lhs_peak = float(np.max(high[ls_idx:head_idx + 1]))
@@ -1557,6 +1565,8 @@ def _detect_pennant(df: pd.DataFrame) -> Optional[PatternResult]:
                 "breakout_level_upper": round(upper_current, 4),
                 "breakout_level_lower": round(lower_current, 4),
                 "distance_to_breakout": round(distance_to_breakout, 4),
+                "_pole_height": round(abs(float(close[pole_end]) - float(close[pole_start])), 4),
+                "direction": "BULLISH" if is_bullish else "BEARISH",
                 "lines": [
                     [(consol_start_date, float(resist_intercept)), (end_date, float(upper_current))],
                     [(consol_start_date, float(support_intercept)), (end_date, float(lower_current))],
@@ -1940,6 +1950,87 @@ for _cs_name, _cs_func in CANDLESTICK_PATTERNS.items():
     _PATTERN_REGISTRY[_cs_name] = _cs_func
 
 
+def _normalize_result(result: Dict) -> None:
+    """Augment a pattern result dict in-place with standardised fields.
+
+    Adds the following keys if they are absent so that all callers (alert
+    formatter, confirmation checker, etc.) can rely on a stable schema:
+
+    * ``direction``    – ``"BULLISH"`` | ``"BEARISH"`` | ``"NEUTRAL"``
+    * ``neckline``     – key breakout/breakdown price level
+    * ``stop_level``   – suggested stop-loss price
+    * ``target_level`` – measured-move target price
+
+    For flag/pennant patterns the target is based on the flagpole height
+    (the textbook measured-move rule); for reversal patterns it is the
+    pattern height projected from the neckline.
+    """
+    # ---- direction -------------------------------------------------------
+    if "direction" not in result:
+        _BEARISH_NAMES = {
+            "double top", "head and shoulders", "bear flag",
+            "bearish engulfing", "bearish harami", "bearish marubozu",
+            "evening star", "three black crows", "three inside down",
+            "dark cloud cover", "shooting star", "hanging man",
+            "gravestone doji", "tweezer top", "descending triangle",
+            "rising wedge", "channel down",
+        }
+        _BULLISH_NAMES = {
+            "double bottom", "inverse head and shoulders", "bull flag",
+            "cup and handle", "bullish engulfing", "bullish harami",
+            "bullish marubozu", "morning star", "three white soldiers",
+            "three inside up", "piercing line", "hammer", "inverted hammer",
+            "dragonfly doji", "tweezer bottom", "ascending triangle",
+            "falling wedge", "channel up", "flat base",
+        }
+        name_lower = result.get("pattern", "").lower()
+        if name_lower in _BEARISH_NAMES:
+            result["direction"] = "BEARISH"
+        elif name_lower in _BULLISH_NAMES:
+            result["direction"] = "BULLISH"
+        else:
+            # Fall back to "bias" field used by candlestick results
+            bias = result.get("bias", "")
+            result["direction"] = bias.upper() if bias in ("bullish", "bearish") else "NEUTRAL"
+
+    direction = result["direction"]
+
+    # ---- neckline (key breakout/breakdown level) -------------------------
+    if "neckline" not in result:
+        upper = result.get("breakout_level_upper")
+        lower = result.get("breakout_level_lower")
+        if direction == "BEARISH":
+            result["neckline"] = lower   # price must close below this
+        elif direction == "BULLISH":
+            result["neckline"] = upper   # price must close above this
+        else:
+            result["neckline"] = upper   # default to upper for neutral
+
+    # ---- stop_level and target_level ------------------------------------
+    upper = result.get("breakout_level_upper") or 0.0
+    lower = result.get("breakout_level_lower") or 0.0
+    neckline = result.get("neckline") or 0.0
+    pattern_height = max(upper - lower, 0.0)
+
+    # pole_height is set explicitly by flag/pennant detectors; fall back to
+    # pattern_height for reversal patterns.  Explicit None check avoids
+    # treating a zero-height pole as "absent".
+    raw_pole = result.pop("_pole_height", None)
+    pole_height = raw_pole if raw_pole is not None else pattern_height
+
+    if direction == "BEARISH":
+        result.setdefault("stop_level", round(upper, 4) if upper else None)
+        target = neckline - pole_height if neckline and pole_height else None
+        result.setdefault("target_level", round(target, 4) if target else None)
+    elif direction == "BULLISH":
+        result.setdefault("stop_level", round(lower, 4) if lower else None)
+        target = neckline + pole_height if neckline and pole_height else None
+        result.setdefault("target_level", round(target, 4) if target else None)
+    else:
+        result.setdefault("stop_level", None)
+        result.setdefault("target_level", None)
+
+
 def available_patterns() -> List[str]:
     """Return the list of recognised pattern names."""
     return list(_PATTERN_REGISTRY.keys())
@@ -1996,6 +2087,7 @@ def detect_pattern(
     state = result.get("state")
     if state == PatternState.BROKEN:
         return None
+    _normalize_result(result)
     return result
 
 
@@ -2028,7 +2120,9 @@ def scan_for_pattern(
             "Scanning %s for %r (%d/%d)...", ticker, pattern_name, idx, total
         )
         try:
-            df = fetcher.get_daily_bars(ticker, period=f"{PATTERN_LOOKBACK}d")
+            # Fetch 200 days so the trimming inside detect_pattern has headroom
+            # for larger swing patterns (H&S, Cup & Handle) that span many bars
+            df = fetcher.get_daily_bars(ticker, period="200d")
             if df is None or df.empty:
                 continue
             match = detect_pattern(pattern_name, df)
