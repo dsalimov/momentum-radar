@@ -18,10 +18,14 @@ Minimal indicator overlay – no RSI / MACD clutter.
 
 Functions
 ---------
-* :func:`render_signal_chart`      – chart for a legacy :class:`StrategySignal`.
+* :func:`render_signal_chart`      – chart for a legacy :class:`StrategySignal`
 * :func:`render_trade_setup_chart` – chart for a :class:`TradeSetup` (new setup
-  detector); includes entry, stop, target markers and a VWAP overlay.
-* :func:`render_pattern_chart`     – chart annotated with a breakout level.
+  detector); includes entry, stop, target markers and a VWAP overlay
+* :func:`render_pattern_chart`     – chart with pattern overlays (trendlines,
+  breakout levels, state annotations) drawn via
+  :func:`~momentum_radar.patterns.charts.generate_pattern_chart`
+* :func:`generate_signal_chart`    – unified dispatcher that routes any
+  :class:`StrategySignal` to the correct renderer based on its strategy type
 """
 
 from __future__ import annotations
@@ -193,40 +197,155 @@ def render_pattern_chart(
 ) -> str:
     """Generate a chart annotated with pattern-specific overlays.
 
-    Delegates to :func:`render_signal_chart` and adds a breakout level
-    annotation when provided.
+    When *pattern_name* or pattern geometry (*breakout_level*, *trendline_highs*,
+    *trendline_lows*) is provided the chart is rendered via
+    :func:`~momentum_radar.patterns.charts.generate_pattern_chart` so that
+    trendlines, breakout levels, and pattern state labels are drawn directly on
+    the candlestick chart.
+
+    Falls back to :func:`render_signal_chart` when no pattern geometry is
+    available.
 
     Args:
         signal:          Evaluated strategy signal.
         df:              OHLCV DataFrame.
         output_path:     Optional save path.
-        pattern_name:    Pattern name used in the chart title.
-        breakout_level:  Horizontal level drawn as a dashed white line.
-        trendline_highs: Reserved for future trendline drawing.
-        trendline_lows:  Reserved for future trendline drawing.
+        pattern_name:    Pattern name used in the chart title and overlays.
+        breakout_level:  Horizontal resistance/support level drawn as a dashed
+                         yellow line on the chart.
+        trendline_highs: List of ``(date, price)`` tuples defining the upper
+                         trendline.  Passed directly to
+                         :func:`~momentum_radar.patterns.charts.generate_pattern_chart`.
+        trendline_lows:  List of ``(date, price)`` tuples defining the lower
+                         trendline.
 
     Returns:
         Absolute path to the generated PNG file.
     """
-    if breakout_level:
-        signal = StrategySignal(
-            ticker=signal.ticker,
-            strategy=signal.strategy,
-            direction=signal.direction,
-            timeframe=signal.timeframe,
-            score=signal.score,
-            grade=signal.grade,
-            confirmations=signal.confirmations,
-            entry=signal.entry,
-            stop=signal.stop,
-            target=signal.target,
-            rr=signal.rr,
-            regime=signal.regime,
-            htf_bias=signal.htf_bias,
-            session=signal.session,
-            fake_breakout_passed=signal.fake_breakout_passed,
-            valid=signal.valid,
+    has_pattern_geometry = (
+        pattern_name is not None
+        or breakout_level is not None
+        or trendline_highs
+        or trendline_lows
+    )
+
+    if has_pattern_geometry:
+        try:
+            from momentum_radar.patterns.charts import generate_pattern_chart
+
+            # Build line segments list expected by generate_pattern_chart
+            lines = []
+            if trendline_highs and len(trendline_highs) >= 2:
+                lines.append(trendline_highs)
+            if trendline_lows and len(trendline_lows) >= 2:
+                lines.append(trendline_lows)
+
+            pattern_result = {
+                "pattern": pattern_name or "Pattern",
+                "confidence": signal.score,
+                "state": None,
+                "compression_ratio": None,
+                "breakout_level_upper": breakout_level,
+                "breakout_level_lower": None,
+                "distance_to_breakout": None,
+                "lines": lines,
+                "key_points": [],
+                "pattern_type": "structure",
+                "candle_indices": [],
+                "bias": "bullish" if signal.direction == "BUY" else "bearish",
+            }
+            return generate_pattern_chart(
+                signal.ticker,
+                df,
+                pattern_result,
+                output_path=output_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Pattern chart generation failed for %s (%s); falling back to standard chart",
+                signal.ticker,
+                exc,
+            )
+
+    return render_signal_chart(signal, df, output_path=output_path)
+
+
+def generate_signal_chart(
+    signal: StrategySignal,
+    df: pd.DataFrame,
+    output_path: Optional[str] = None,
+    pattern_result: Optional[dict] = None,
+) -> str:
+    """Unified chart dispatcher – generate the appropriate chart for *signal*.
+
+    Routing logic:
+
+    * **chart_pattern strategy** with *pattern_result* provided → full pattern
+      chart with trendlines, breakout levels, and pattern state annotation via
+      :func:`render_pattern_chart`.
+    * **chart_pattern strategy** without *pattern_result* → standard signal
+      chart with entry/stop/target levels via :func:`render_signal_chart`.
+    * **All other strategies** → standard signal chart with entry/stop/target
+      levels and VWAP overlay.
+
+    The generated chart always includes:
+
+    * Dark nightclouds theme
+    * Entry (green), stop (red), and target (blue) horizontal lines
+    * Volume panel below price bars
+    * Ticker, strategy type, timeframe, score, and R:R in the chart title
+
+    Args:
+        signal:         A :class:`~momentum_radar.strategies.base.StrategySignal`
+                        produced by any strategy engine.
+        df:             OHLCV DataFrame for the signal's timeframe.
+        output_path:    Optional path to save the PNG file.  A timestamped temp
+                        file is used when ``None``.
+        pattern_result: Optional result dict from
+                        :func:`~momentum_radar.patterns.detector.detect_pattern`.
+                        When supplied for chart-pattern signals, pattern overlays
+                        (trendlines, breakout levels, key-point markers) are
+                        drawn directly on the chart.
+
+    Returns:
+        Absolute path to the generated PNG file.
+
+    Raises:
+        ImportError: If *mplfinance* or *matplotlib* is not installed.
+        ValueError:  If *df* is empty or missing required OHLCV columns.
+
+    Example::
+
+        from momentum_radar.ui.chart_renderer import generate_signal_chart
+
+        path = generate_signal_chart(signal, df)
+        path = generate_signal_chart(signal, df, pattern_result=detector_output)
+    """
+    if df is None or df.empty:
+        raise ValueError("DataFrame is empty – cannot generate chart")
+
+    is_pattern = signal.strategy == "chart_pattern"
+
+    if is_pattern and pattern_result:
+        breakout_level = pattern_result.get("breakout_level_upper")
+        trendline_highs = None
+        trendline_lows = None
+        lines = pattern_result.get("lines", [])
+        if len(lines) >= 1:
+            trendline_highs = lines[0]
+        if len(lines) >= 2:
+            trendline_lows = lines[1]
+
+        return render_pattern_chart(
+            signal,
+            df,
+            output_path=output_path,
+            pattern_name=pattern_result.get("pattern"),
+            breakout_level=breakout_level,
+            trendline_highs=trendline_highs,
+            trendline_lows=trendline_lows,
         )
+
     return render_signal_chart(signal, df, output_path=output_path)
 
 

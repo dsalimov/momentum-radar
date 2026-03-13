@@ -157,7 +157,19 @@ def _nearest_sd_zone(
     return f"{label} {zone_low:.2f}–{zone_high:.2f}"
 
 
-def _select_best_sweep(sweeps: List[Dict]) -> Optional[Dict]:
+def _select_best_sweep(sweeps: List[Dict], direction: Optional[str] = None) -> Optional[Dict]:
+    """Return the highest-volume sweep that meets the minimum contract threshold.
+
+    Args:
+        sweeps:    List of sweep dicts, each expected to contain a ``"volume"`` key.
+        direction: Optional sweep direction label (e.g. ``"Bullish"`` or
+                   ``"Bearish"``).  Currently unused in filtering logic but
+                   accepted so callers can document intent.
+
+    Returns:
+        The sweep dict with the highest volume, or ``None`` if no sweep meets
+        the minimum contract threshold.
+    """
     min_contracts = config.signals.golden_sweep_min_contracts
     qualified = [s for s in sweeps if int(s.get("volume", 0)) >= min_contracts]
     if not qualified:
