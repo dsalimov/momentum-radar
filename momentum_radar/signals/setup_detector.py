@@ -149,6 +149,7 @@ class TradeSetup:
     confidence: str
     timestamp: datetime
     details: str = ""
+    target2: float = 0.0
     strategy_type: Optional[StrategyType] = field(default=None)
 
     def __post_init__(self) -> None:

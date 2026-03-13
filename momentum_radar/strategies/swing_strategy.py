@@ -181,10 +181,11 @@ def evaluate(
         entry = float(daily["close"].iloc[-1])
         atr   = compute_atr(daily)
         trade = compute_trade_params("swing", entry=entry, atr=atr)
-        signal.entry  = trade.entry
-        signal.stop   = trade.stop
-        signal.target = trade.target
-        signal.rr     = trade.rr
+        signal.entry   = trade.entry
+        signal.stop    = trade.stop
+        signal.target  = trade.target
+        signal.target2 = trade.target2
+        signal.rr      = trade.rr
 
     signal.valid = (
         signal.score >= _MIN_SCORE

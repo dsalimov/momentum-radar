@@ -136,3 +136,181 @@ def test_format_trade_setup_list_multiple():
     assert "AAA" in msg
     assert "BBB" in msg
     assert "─" in msg  # separator present
+
+
+# ---------------------------------------------------------------------------
+# format_strategy_signal
+# ---------------------------------------------------------------------------
+
+def _make_signal(**kwargs):
+    """Build a minimal StrategySignal for testing."""
+    from momentum_radar.strategies.base import StrategySignal
+    defaults = dict(
+        ticker="AMD",
+        strategy="scalp",
+        entry=178.40,
+        stop=177.90,
+        target=179.10,
+        rr=2.0,
+        grade="A",
+    )
+    defaults.update(kwargs)
+    return StrategySignal(**defaults)
+
+
+class TestFormatStrategySignal:
+    def test_scalp_trade_header(self):
+        """Scalp strategy uses 🚨 SCALP TRADE header."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="scalp")
+        msg = format_strategy_signal(signal)
+        assert "🚨 SCALP TRADE" in msg
+
+    def test_day_trade_header_intraday(self):
+        """Intraday strategy uses 🚨 DAY TRADE header."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="intraday")
+        msg = format_strategy_signal(signal)
+        assert "🚨 DAY TRADE" in msg
+
+    def test_swing_trade_header(self):
+        """Swing strategy uses 🚨 SWING TRADE header."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="swing")
+        msg = format_strategy_signal(signal)
+        assert "🚨 SWING TRADE" in msg
+
+    def test_chart_pattern_header(self):
+        """Chart pattern strategy uses 🚨 SWING TRADE header."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="chart_pattern")
+        msg = format_strategy_signal(signal)
+        assert "🚨 SWING TRADE" in msg
+
+    def test_unusual_volume_header(self):
+        """Unusual volume strategy uses 🚨 DAY TRADE header."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="unusual_volume")
+        msg = format_strategy_signal(signal)
+        assert "🚨 DAY TRADE" in msg
+
+    def test_required_fields_present(self):
+        """All required fields are included in the alert."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal()
+        msg = format_strategy_signal(signal)
+        assert "AMD" in msg
+        assert "178.40" in msg
+        assert "177.90" in msg
+        assert "179.10" in msg
+        assert "🚨" in msg
+
+    def test_empty_without_trade_structure(self):
+        """Returns empty string when entry/stop/target are all zero."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        from momentum_radar.strategies.base import StrategySignal
+        signal = StrategySignal(ticker="X", strategy="scalp")
+        assert format_strategy_signal(signal) == ""
+
+    def test_single_target_when_target2_zero(self):
+        """Single target line when target2 is not set."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(target2=0.0)
+        msg = format_strategy_signal(signal)
+        assert "Target:" in msg
+        assert "Target 1:" not in msg
+        assert "Target 2:" not in msg
+
+    def test_two_targets_when_target2_set(self):
+        """Target 1 and Target 2 lines shown when target2 > 0."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(strategy="swing", target=930.0, target2=950.0)
+        msg = format_strategy_signal(signal)
+        assert "Target 1:" in msg
+        assert "Target 2:" in msg
+        assert "930.00" in msg
+        assert "950.00" in msg
+
+    def test_options_flow_label_shown(self):
+        """Options flow label is included when set."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(options_flow_label="Weekly Call Sweep")
+        msg = format_strategy_signal(signal)
+        assert "Options Flow: Weekly Call Sweep" in msg
+
+    def test_options_flow_label_omitted_when_empty(self):
+        """No options flow line when label is empty."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(options_flow_label="")
+        msg = format_strategy_signal(signal)
+        assert "Options Flow:" not in msg
+
+    def test_confirmations_shown(self):
+        """Confirmations list is included when not empty."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(confirmations=["Break of Structure", "Volume Spike (3.2x)"])
+        msg = format_strategy_signal(signal)
+        assert "Confirmations:" in msg
+        assert "Break of Structure" in msg
+
+    def test_grade_shown_as_confidence(self):
+        """Grade is used as the confidence label."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(grade="A+")
+        msg = format_strategy_signal(signal)
+        assert "A+" in msg
+
+    def test_rr_shown(self):
+        """Risk/reward ratio is included in the alert."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(rr=2.5)
+        msg = format_strategy_signal(signal)
+        assert "2.5" in msg
+
+    def test_custom_setup_name(self):
+        """Custom setup_name overrides the default."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal()
+        msg = format_strategy_signal(signal, setup_name="VWAP Reclaim")
+        assert "VWAP Reclaim" in msg
+
+    def test_direction_long_displayed(self):
+        """BUY direction renders as Long."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(direction="BUY")
+        msg = format_strategy_signal(signal)
+        assert "Long" in msg
+
+    def test_direction_short_displayed(self):
+        """SELL direction renders as Short."""
+        from momentum_radar.alerts.trade_formatter import format_strategy_signal
+        signal = _make_signal(direction="SELL")
+        msg = format_strategy_signal(signal)
+        assert "Short" in msg
+
+
+# ---------------------------------------------------------------------------
+# TradeSetup: target2 multi-target support
+# ---------------------------------------------------------------------------
+
+class TestTradeSetupTarget2:
+    def test_single_target_when_target2_zero(self):
+        """format_trade_setup shows single target line when target2 is 0."""
+        setup = _make_setup(target2=0.0)
+        msg = format_trade_setup(setup, timestamp=_FIXED_TS)
+        assert "Target:" in msg
+        assert "Target 1:" not in msg
+
+    def test_two_targets_when_target2_set(self):
+        """format_trade_setup shows Target 1 and Target 2 when target2 > 0."""
+        setup = _make_setup(
+            setup_type=SetupType.CHART_PATTERN_BREAKOUT,
+            direction=SetupDirection.LONG,
+            target=320.0,
+            target2=340.0,
+        )
+        msg = format_trade_setup(setup, timestamp=_FIXED_TS)
+        assert "Target 1:" in msg
+        assert "Target 2:" in msg
+        assert "320.00" in msg
+        assert "340.00" in msg

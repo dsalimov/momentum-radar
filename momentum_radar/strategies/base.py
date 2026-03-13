@@ -7,6 +7,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+#: Maps each strategy name to its user-facing strategy classification label.
+STRATEGY_TYPE_MAP: dict = {
+    "scalp":          "SCALP TRADE",
+    "intraday":       "DAY TRADE",
+    "swing":          "SWING TRADE",
+    "chart_pattern":  "SWING TRADE",
+    "unusual_volume": "DAY TRADE",
+}
+
 
 @dataclass
 class StrategySignal:
@@ -15,6 +24,8 @@ class StrategySignal:
     Attributes:
         ticker:               Stock symbol.
         strategy:             Strategy name (e.g. ``"scalp"``).
+        strategy_type:        User-facing classification label (e.g. ``"SCALP TRADE"``).
+                              Auto-derived from *strategy* if left empty.
         direction:            ``"BUY"`` or ``"SELL"``.
         timeframe:            Active timeframe (e.g. ``"2m"``, ``"5m"``, ``"1H"``).
         score:                Strategy score 0–100.
@@ -22,7 +33,9 @@ class StrategySignal:
         confirmations:        List of confirmation label strings.
         entry:                Suggested entry price.
         stop:                 Stop-loss price.
-        target:               Take-profit price.
+        target:               Primary take-profit price.
+        target2:              Secondary take-profit price (swing/chart_pattern only; 0 = not set).
+        options_flow_label:   Optional human-readable options-flow annotation shown in the alert.
         rr:                   Computed risk-to-reward ratio.
         regime:               Market regime display string.
         htf_bias:             Higher-timeframe bias label.
@@ -33,6 +46,7 @@ class StrategySignal:
 
     ticker: str
     strategy: str
+    strategy_type: str = ""
     direction: str = "BUY"
     timeframe: str = "5m"
     score: int = 0
@@ -41,12 +55,18 @@ class StrategySignal:
     entry: float = 0.0
     stop: float = 0.0
     target: float = 0.0
+    target2: float = 0.0
+    options_flow_label: str = ""
     rr: float = 0.0
     regime: str = "ranging"
     htf_bias: str = "Neutral"
     session: str = ""
     fake_breakout_passed: bool = False
     valid: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.strategy_type:
+            self.strategy_type = STRATEGY_TYPE_MAP.get(self.strategy, "DAY TRADE")
 
     @property
     def confirmation_count(self) -> int:

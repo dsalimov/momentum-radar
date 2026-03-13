@@ -81,6 +81,54 @@ class TestStrategySignalBase:
         s = StrategySignal(ticker="X", strategy="swing")
         assert s.valid is False
 
+    def test_strategy_type_auto_derived_scalp(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="scalp")
+        assert s.strategy_type == "SCALP TRADE"
+
+    def test_strategy_type_auto_derived_intraday(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="intraday")
+        assert s.strategy_type == "DAY TRADE"
+
+    def test_strategy_type_auto_derived_swing(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="swing")
+        assert s.strategy_type == "SWING TRADE"
+
+    def test_strategy_type_auto_derived_chart_pattern(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="chart_pattern")
+        assert s.strategy_type == "SWING TRADE"
+
+    def test_strategy_type_auto_derived_unusual_volume(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="unusual_volume")
+        assert s.strategy_type == "DAY TRADE"
+
+    def test_strategy_type_explicit_override(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="scalp", strategy_type="DAY TRADE")
+        assert s.strategy_type == "DAY TRADE"
+
+    def test_target2_default_zero(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="scalp")
+        assert s.target2 == 0.0
+
+    def test_options_flow_label_default_empty(self):
+        from momentum_radar.strategies.base import StrategySignal
+
+        s = StrategySignal(ticker="T", strategy="scalp")
+        assert s.options_flow_label == ""
+
 
 # ---------------------------------------------------------------------------
 # scalp_strategy
@@ -224,6 +272,21 @@ class TestSwingStrategy:
         assert result is not None
         assert "Liquidity" in result
 
+    def test_strategy_type_is_swing(self):
+        """Swing strategy sets strategy_type to SWING TRADE."""
+        from momentum_radar.strategies.swing_strategy import evaluate
+
+        result = evaluate("X")
+        assert result.strategy_type == "SWING TRADE"
+
+    def test_target2_populated_when_data_given(self):
+        """target2 is set when daily data is available (swing has 2 targets)."""
+        from momentum_radar.strategies.swing_strategy import evaluate
+
+        result = evaluate("SPY", daily=_make_breakout_daily())
+        if result.entry > 0:
+            assert result.target2 > 0
+
 
 # ---------------------------------------------------------------------------
 # chart_pattern_strategy
@@ -282,6 +345,21 @@ class TestChartPatternStrategy:
         )
         result = _check_volume_expansion(daily)
         assert result is not None
+
+    def test_strategy_type_is_swing(self):
+        """Chart-pattern strategy sets strategy_type to SWING TRADE."""
+        from momentum_radar.strategies.chart_pattern_strategy import evaluate
+
+        result = evaluate("X")
+        assert result.strategy_type == "SWING TRADE"
+
+    def test_target2_populated_when_data_given(self):
+        """target2 is set when daily data is available (chart_pattern has 2 targets)."""
+        from momentum_radar.strategies.chart_pattern_strategy import evaluate
+
+        result = evaluate("SPY", daily=_make_breakout_daily())
+        if result.entry > 0:
+            assert result.target2 > 0
 
 
 # ---------------------------------------------------------------------------
