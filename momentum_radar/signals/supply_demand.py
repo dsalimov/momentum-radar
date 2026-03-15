@@ -9,12 +9,22 @@ Registered signals
 Detection algorithm
 -------------------
 Demand zones form from:
-  1. A *base* – 3-to-7 bars of tight range (range < ATR threshold)
+  1. A *base* – 2-to-7 bars of tight range (range < ATR threshold)
   2. Immediately followed by an *impulse* upward move (> ``_IMPULSE_ATR_MULT`` × ATR)
   3. Volume during impulse > ``_IMPULSE_VOL_MULT`` × average volume
-  4. The zone spans [base_low … base_high]
+  4. Zone lower boundary: lowest wick of base candles
+     Zone upper boundary: body high (max of open/close) of last base candle
 
-Supply zones use the same logic with a downward impulse.
+Supply zones use the same logic with a downward impulse:
+  4. Zone upper boundary: highest wick of base candles
+     Zone lower boundary: body low (min of open/close) of last base candle
+
+Pattern classification (zone_pattern)
+--------------------------------------
+- DBR  Drop → Base → Rally   (demand, preceded by a down-move)
+- RBR  Rally → Base → Rally  (demand continuation)
+- RBD  Rally → Base → Drop   (supply, preceded by a rally)
+- DBD  Drop → Base → Drop    (supply continuation)
 
 Zone scoring (0–100)
 --------------------
@@ -47,11 +57,15 @@ logger = logging.getLogger(__name__)
 _BASE_MIN_BARS: int = 2
 _BASE_MAX_BARS: int = 7
 # Base range must be tighter than this fraction of ATR
-_BASE_ATR_MULT: float = 0.80
+_BASE_ATR_MULT: float = 0.90
 # Impulse must be at least this multiple of ATR to qualify
-_IMPULSE_ATR_MULT: float = 1.20
+_IMPULSE_ATR_MULT: float = 1.10
 # Volume during impulse must exceed this multiple of the prior average
-_IMPULSE_VOL_MULT: float = 1.30
+# (set conservatively so institutional-quality moves are not missed on
+#  lower-volume timeframes or wider-spread stocks)
+_IMPULSE_VOL_MULT: float = 1.10
+# Number of bars to look forward for the impulse move
+_IMPULSE_LOOKAHEAD: int = 5
 # How close price must be to a zone to trigger (fraction of zone height or ATR)
 _ZONE_PROXIMITY_MULT: float = 0.50
 # Minimum zone height relative to ATR (filters micro-zones)
@@ -82,6 +96,9 @@ class SupplyDemandZone:
                              analysis starts here to avoid counting base/impulse bars).
         base_range:          Range of the base in price units (stored for rescoring).
         atr:                 ATR at detection time (stored for rescoring).
+        zone_pattern:        Four-letter pattern classification: ``"DBR"`` (Drop→Base→Rally),
+                             ``"RBR"`` (Rally→Base→Rally), ``"RBD"`` (Rally→Base→Drop),
+                             ``"DBD"`` (Drop→Base→Drop), or ``""`` when unknown.
     """
 
     ticker: str
@@ -98,6 +115,7 @@ class SupplyDemandZone:
     impulse_end_index: int = 0
     base_range: float = 0.0
     atr: float = 1.0
+    zone_pattern: str = ""    # "DBR" | "RBR" | "RBD" | "DBD" | ""
 
     @property
     def mid_price(self) -> float:
@@ -139,6 +157,60 @@ _TF_SCORE_BONUS: Dict[str, float] = {
 # Zone detection helpers
 # ---------------------------------------------------------------------------
 
+def _classify_pattern(
+    df: pd.DataFrame,
+    base_start: int,
+    zone_type: str,
+    atr: float,
+) -> str:
+    """Classify the zone into one of the four S&D patterns.
+
+    Pattern classification examines the directional move *before* the base:
+    - ``"DBR"`` – Drop → Base → Rally  (demand, prior move was down)
+    - ``"RBR"`` – Rally → Base → Rally (demand continuation)
+    - ``"RBD"`` – Rally → Base → Drop  (supply, prior move was up)
+    - ``"DBD"`` – Drop → Base → Drop   (supply continuation)
+
+    The "prior move" is the net price change over the 5 bars immediately
+    preceding the base, compared against half an ATR as a significance
+    threshold.
+
+    Args:
+        df:        Full OHLCV DataFrame.
+        base_start: Index of the first bar in the base.
+        zone_type:  ``"demand"`` or ``"supply"``.
+        atr:        ATR for the series.
+
+    Returns:
+        Pattern label string, or ``""`` if there is insufficient prior data.
+    """
+    lookback = 5
+    if base_start < lookback:
+        return ""
+
+    prior = df.iloc[base_start - lookback : base_start]
+    # iloc[0] is the oldest bar in the prior window (lookback bars before base),
+    # iloc[-1] is the newest bar immediately before the base starts.
+    prior_move = float(prior["close"].iloc[-1]) - float(prior["close"].iloc[0])
+    threshold = atr * 0.5
+
+    prior_up = prior_move > threshold
+    prior_down = prior_move < -threshold
+
+    if zone_type == "demand":
+        if prior_up:
+            return "RBR"
+        elif prior_down:
+            return "DBR"
+        return ""
+    else:
+        if prior_up:
+            return "RBD"
+        elif prior_down:
+            return "DBD"
+        return ""
+
+
 def _detect_zones(
     df: pd.DataFrame,
     atr: float,
@@ -147,6 +219,16 @@ def _detect_zones(
     avg_volume: float,
 ) -> List[SupplyDemandZone]:
     """Scan *df* for supply and demand zones.
+
+    Zone boundaries follow the institutional S&D convention:
+
+    **Demand zone**
+      - Lower boundary: lowest wick of base candles
+      - Upper boundary: body high (``max(open, close)``) of the last base candle
+
+    **Supply zone**
+      - Upper boundary: highest wick of base candles
+      - Lower boundary: body low (``min(open, close)``) of the last base candle
 
     Args:
         df:         OHLCV DataFrame (any timeframe).
@@ -165,7 +247,7 @@ def _detect_zones(
     zones: List[SupplyDemandZone] = []
     n = len(df)
 
-    for i in range(_BASE_MIN_BARS, n - 3):
+    for i in range(_BASE_MIN_BARS, n - 1):
         for base_len in range(_BASE_MIN_BARS, min(_BASE_MAX_BARS + 1, i + 1)):
             base_start = i - base_len + 1
             base = df.iloc[base_start : i + 1]
@@ -174,85 +256,110 @@ def _detect_zones(
             if base_range > _BASE_ATR_MULT * atr:
                 continue  # Too wide for a base
 
+            # Look forward up to _IMPULSE_LOOKAHEAD bars for the impulse
+            impulse_slice = df.iloc[i + 1 : i + 1 + _IMPULSE_LOOKAHEAD]
+            if len(impulse_slice) < 1:
+                continue
+
+            imp_vol = (
+                float(impulse_slice["volume"].mean())
+                if "volume" in impulse_slice.columns
+                else 0.0
+            )
+            vol_ratio = imp_vol / avg_volume if avg_volume > 0 else 1.0
+
+            last_base = base.iloc[-1]
+            # Body boundaries of the last base candle
+            last_body_high = float(max(last_base["open"], last_base["close"]))
+            last_body_low = float(min(last_base["open"], last_base["close"]))
+
             # ----- Upward impulse (demand zone candidate) -----
-            impulse_up = df.iloc[i + 1 : i + 4]
-            if len(impulse_up) >= 1:
-                impulse_move_up = float(impulse_up["close"].max()) - float(df.iloc[i]["close"])
-                if impulse_move_up >= _IMPULSE_ATR_MULT * atr:
-                    imp_vol = float(impulse_up["volume"].mean()) if "volume" in impulse_up.columns else 0.0
-                    vol_ratio = imp_vol / avg_volume if avg_volume > 0 else 1.0
-                    if vol_ratio >= _IMPULSE_VOL_MULT:
-                        zone_high = float(base["high"].max())
-                        zone_low = float(base["low"].min())
-                        if zone_high - zone_low >= _ZONE_MIN_HEIGHT_ATR * atr:
-                            score = _compute_score(
-                                impulse_magnitude=impulse_move_up / atr,
-                                volume_expansion=vol_ratio,
-                                base_range=base_range,
-                                atr=atr,
-                                touch_count=0,
-                                status="fresh",
-                                timeframe=timeframe,
-                            )
-                            zones.append(
-                                SupplyDemandZone(
-                                    ticker=ticker,
-                                    timeframe=timeframe,
-                                    zone_type="demand",
-                                    zone_high=zone_high,
-                                    zone_low=zone_low,
-                                    strength_score=round(score, 1),
-                                    touch_count=0,
-                                    status="fresh",
-                                    impulse_magnitude=round(impulse_move_up / atr, 2),
-                                    volume_expansion=round(vol_ratio, 2),
-                                    creation_bar_index=base_start,
-                                    impulse_end_index=min(i + 4, n),
-                                    base_range=base_range,
-                                    atr=atr,
-                                )
-                            )
-                            break  # Found a valid demand base at this position
+            impulse_move_up = (
+                float(impulse_slice["close"].max()) - float(df.iloc[i]["close"])
+            )
+            if impulse_move_up >= _IMPULSE_ATR_MULT * atr and vol_ratio >= _IMPULSE_VOL_MULT:
+                # Demand zone:
+                #   lower boundary = lowest wick of base
+                #   upper boundary = body high of last base candle
+                #   (clamped to at least zone_low + min_height)
+                min_height = _ZONE_MIN_HEIGHT_ATR * atr
+                zone_low = float(base["low"].min())
+                zone_high = max(last_body_high, zone_low + min_height)
+                if zone_high > zone_low:
+                    score = _compute_score(
+                        impulse_magnitude=impulse_move_up / atr,
+                        volume_expansion=vol_ratio,
+                        base_range=base_range,
+                        atr=atr,
+                        touch_count=0,
+                        status="fresh",
+                        timeframe=timeframe,
+                    )
+                    pattern = _classify_pattern(df, base_start, "demand", atr)
+                    zones.append(
+                        SupplyDemandZone(
+                            ticker=ticker,
+                            timeframe=timeframe,
+                            zone_type="demand",
+                            zone_high=round(zone_high, 4),
+                            zone_low=round(zone_low, 4),
+                            strength_score=round(score, 1),
+                            touch_count=0,
+                            status="fresh",
+                            impulse_magnitude=round(impulse_move_up / atr, 2),
+                            volume_expansion=round(vol_ratio, 2),
+                            creation_bar_index=base_start,
+                            impulse_end_index=min(i + 1 + _IMPULSE_LOOKAHEAD, n),
+                            base_range=base_range,
+                            atr=atr,
+                            zone_pattern=pattern,
+                        )
+                    )
+                    break  # Found a valid demand base at this position
 
             # ----- Downward impulse (supply zone candidate) -----
-            impulse_dn = df.iloc[i + 1 : i + 4]
-            if len(impulse_dn) >= 1:
-                impulse_move_dn = float(df.iloc[i]["close"]) - float(impulse_dn["close"].min())
-                if impulse_move_dn >= _IMPULSE_ATR_MULT * atr:
-                    imp_vol = float(impulse_dn["volume"].mean()) if "volume" in impulse_dn.columns else 0.0
-                    vol_ratio = imp_vol / avg_volume if avg_volume > 0 else 1.0
-                    if vol_ratio >= _IMPULSE_VOL_MULT:
-                        zone_high = float(base["high"].max())
-                        zone_low = float(base["low"].min())
-                        if zone_high - zone_low >= _ZONE_MIN_HEIGHT_ATR * atr:
-                            score = _compute_score(
-                                impulse_magnitude=impulse_move_dn / atr,
-                                volume_expansion=vol_ratio,
-                                base_range=base_range,
-                                atr=atr,
-                                touch_count=0,
-                                status="fresh",
-                                timeframe=timeframe,
-                            )
-                            zones.append(
-                                SupplyDemandZone(
-                                    ticker=ticker,
-                                    timeframe=timeframe,
-                                    zone_type="supply",
-                                    zone_high=zone_high,
-                                    zone_low=zone_low,
-                                    strength_score=round(score, 1),
-                                    touch_count=0,
-                                    status="fresh",
-                                    impulse_magnitude=round(impulse_move_dn / atr, 2),
-                                    volume_expansion=round(vol_ratio, 2),
-                                    creation_bar_index=base_start,
-                                    impulse_end_index=min(i + 4, n),
-                                    base_range=base_range,
-                                    atr=atr,
-                                )
-                            )
-                            break
+            impulse_move_dn = (
+                float(df.iloc[i]["close"]) - float(impulse_slice["close"].min())
+            )
+            if impulse_move_dn >= _IMPULSE_ATR_MULT * atr and vol_ratio >= _IMPULSE_VOL_MULT:
+                # Supply zone:
+                #   upper boundary = highest wick of base
+                #   lower boundary = body low of last base candle
+                #   (clamped to at most zone_high - min_height)
+                min_height = _ZONE_MIN_HEIGHT_ATR * atr
+                zone_high = float(base["high"].max())
+                zone_low = min(last_body_low, zone_high - min_height)
+                if zone_high > zone_low:
+                    score = _compute_score(
+                        impulse_magnitude=impulse_move_dn / atr,
+                        volume_expansion=vol_ratio,
+                        base_range=base_range,
+                        atr=atr,
+                        touch_count=0,
+                        status="fresh",
+                        timeframe=timeframe,
+                    )
+                    pattern = _classify_pattern(df, base_start, "supply", atr)
+                    zones.append(
+                        SupplyDemandZone(
+                            ticker=ticker,
+                            timeframe=timeframe,
+                            zone_type="supply",
+                            zone_high=round(zone_high, 4),
+                            zone_low=round(zone_low, 4),
+                            strength_score=round(score, 1),
+                            touch_count=0,
+                            status="fresh",
+                            impulse_magnitude=round(impulse_move_dn / atr, 2),
+                            volume_expansion=round(vol_ratio, 2),
+                            creation_bar_index=base_start,
+                            impulse_end_index=min(i + 1 + _IMPULSE_LOOKAHEAD, n),
+                            base_range=base_range,
+                            atr=atr,
+                            zone_pattern=pattern,
+                        )
+                    )
+                    break
 
     # Deduplicate overlapping zones of the same type
     zones = _deduplicate_zones(zones)
@@ -446,12 +553,12 @@ def detect_zones(
     ticker: str,
     daily: Optional[pd.DataFrame],
     bars: Optional[pd.DataFrame] = None,
-    min_score: float = 50.0,
+    min_score: float = 45.0,
 ) -> List[SupplyDemandZone]:
     """Detect supply and demand zones across available timeframes.
 
     Uses daily bars for Daily/Weekly zones and, if intraday bars are
-    provided and long enough, resampled bars for 1H / 15M / 5M zones.
+    provided and long enough, resampled bars for 4H / 1H / 15M / 5M zones.
 
     Args:
         ticker:    Stock symbol.
@@ -495,7 +602,7 @@ def detect_zones(
         except Exception as exc:
             logger.debug("Weekly aggregation failed for %s: %s", ticker, exc)
 
-    # --- Intraday zones (1H, 15M, 5M) from 1-min bars ---
+    # --- Intraday zones (4H, 1H, 15M, 5M) from 1-min bars ---
     if bars is not None and not bars.empty and len(bars) >= 30:
         if not isinstance(bars.index, pd.DatetimeIndex):
             logger.warning(
@@ -505,7 +612,7 @@ def detect_zones(
                 type(bars.index).__name__,
             )
         else:
-            for tf_label, rule in [("1h", "1h"), ("15m", "15min"), ("5m", "5min")]:
+            for tf_label, rule in [("4h", "4h"), ("1h", "1h"), ("15m", "15min"), ("5m", "5min")]:
                 try:
                     tf_df = bars.resample(rule).agg(
                         {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
