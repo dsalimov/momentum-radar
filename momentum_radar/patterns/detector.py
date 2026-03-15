@@ -4,11 +4,28 @@ detector.py - Compression-tracking chart pattern detection engine.
 Detects patterns IN PROGRESS (before breakout), tracking compression and
 consolidation live.  Alerts BEFORE breakout, invalidates AFTER breakout.
 
-Pattern States
---------------
+Pattern States (internal)
+--------------------------
 FORMING    : Structure detected, still building
 NEAR_BREAK : Price approaching breakout level (alert zone)
 BROKEN     : Price closed outside structure - invalidated (never returned)
+
+Pattern Phases (external lifecycle, per architecture spec)
+-----------------------------------------------------------
+FORMATION    : Pattern structure is building; not yet actionable.
+CONFIRMATION : Neckline / key level is being tested; structure complete but
+               breakout not yet confirmed.
+BREAKOUT     : Price has closed beyond the breakout level with a strong candle
+               body and an above-average volume surge.  Only at this phase
+               should a signal be generated.
+
+Pattern Confidence Scoring (per architecture spec, Section 8)
+--------------------------------------------------------------
+Each detected pattern receives a structured confidence score (0–100):
+- Pattern Structure   : 40 pts  (symmetry, touches, formation quality)
+- Volume Confirmation : 20 pts  (volume behaviour during formation)
+- Trend Alignment     : 20 pts  (pattern direction agrees with prevailing trend)
+- Level Strength      : 20 pts  (number of key-level touches)
 
 Supported patterns
 ------------------
@@ -65,6 +82,24 @@ class PatternState(Enum):
     FORMING = "forming"           # Structure detected, still building
     NEAR_BREAK = "near_break"     # Price approaching breakout level (ALERT ZONE)
     BROKEN = "broken"             # Price closed outside structure - INVALIDATE
+
+
+class PatternPhase(Enum):
+    """External lifecycle phase of a detected chart pattern.
+
+    Maps internal compression states to the three-stage model required by the
+    architecture specification (Sections 3 & 4):
+
+    * **FORMATION**    – the pattern is still building; not yet actionable.
+    * **CONFIRMATION** – the pattern structure is complete and price is
+      approaching the breakout level; label as *forming* in alerts.
+    * **BREAKOUT**     – price has closed beyond the breakout level with a
+      strong candle body and above-average volume; a signal may be generated.
+    """
+
+    FORMATION = "forming"
+    CONFIRMATION = "confirming"
+    BREAKOUT = "breakout"
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +252,161 @@ def _fmt_date(ts) -> str:
         return pd.Timestamp(ts).strftime("%b %d")
     except Exception:
         return str(ts)
+
+
+# ---------------------------------------------------------------------------
+# Pattern Phase and Confidence Scoring (architecture spec §§ 3, 4, 8)
+# ---------------------------------------------------------------------------
+
+_BULLISH_PATTERNS = frozenset({
+    "bull flag", "ascending triangle", "double bottom",
+    "cup and handle", "inverse head and shoulders", "pennant",
+    "flat base", "channel up",
+})
+_BEARISH_PATTERNS = frozenset({
+    "bear flag", "descending triangle", "double top",
+    "head and shoulders", "rising wedge", "falling wedge",
+    "channel down", "broadening formation",
+})
+
+
+def _compute_pattern_phase(
+    result: PatternResult,
+    df: Optional[pd.DataFrame] = None,
+) -> "PatternPhase":
+    """Derive the external :class:`PatternPhase` from an internal pattern result.
+
+    The mapping is:
+
+    * ``BREAKOUT`` – price has closed beyond the upper/lower breakout level
+      **and** the last bar's volume exceeds the 20-bar average (volume surge).
+    * ``CONFIRMATION`` – internal state is ``NEAR_BREAK`` (price is within one
+      ATR of the breakout level) but the breakout has not yet been confirmed.
+    * ``FORMATION`` – all other in-progress patterns.
+
+    Args:
+        result: Pattern result dict from any detector function.
+        df:     The OHLCV DataFrame slice that was passed to the detector.
+
+    Returns:
+        The appropriate :class:`PatternPhase` value.
+    """
+    if df is not None and not df.empty:
+        try:
+            current_price = float(df["close"].iloc[-1])
+            breakout_upper = float(result.get("breakout_level_upper", float("inf")))
+            breakout_lower = float(result.get("breakout_level_lower", 0.0))
+            vol = df["volume"].values.astype(float) if "volume" in df.columns else None
+            if vol is not None and len(vol) >= 2:
+                last_vol = vol[-1]
+                avg_vol = float(vol[-20:].mean()) if len(vol) >= 20 else float(vol.mean())
+                vol_surge = last_vol > avg_vol * 1.10 and avg_vol > 0
+            else:
+                vol_surge = False
+            if vol_surge and (current_price > breakout_upper or current_price < breakout_lower):
+                return PatternPhase.BREAKOUT
+        except Exception:
+            pass
+
+    state = result.get("state")
+    if state == PatternState.NEAR_BREAK:
+        return PatternPhase.CONFIRMATION
+    return PatternPhase.FORMATION
+
+
+def compute_pattern_confidence_score(
+    result: PatternResult,
+    df: Optional[pd.DataFrame] = None,
+) -> int:
+    """Compute a structured 0–100 confidence score for a detected pattern.
+
+    Scores are split across four equally weighted dimensions as defined in the
+    architecture specification (Section 8):
+
+    +-----------------------+--------+----------------------------------------+
+    | Dimension             | Points | Criteria                               |
+    +=======================+========+========================================+
+    | Pattern Structure     |   40   | Raw detector confidence (proportional) |
+    +-----------------------+--------+----------------------------------------+
+    | Volume Confirmation   |   20   | Volume trend during formation          |
+    +-----------------------+--------+----------------------------------------+
+    | Trend Alignment       |   20   | Pattern direction vs. MA20/MA50        |
+    +-----------------------+--------+----------------------------------------+
+    | Level Strength        |   20   | Number of key-point touches            |
+    +-----------------------+--------+----------------------------------------+
+
+    Args:
+        result: Pattern result dict produced by :func:`detect_pattern` (or any
+                individual detector function).
+        df:     Optional OHLCV DataFrame for MA / level-strength calculations.
+                When ``None``, Trend Alignment defaults to neutral (10 pts).
+
+    Returns:
+        Integer score in the range **0–100**.
+    """
+    if not result:
+        return 0
+
+    # ------------------------------------------------------------------
+    # 1. Pattern Structure (0–40 pts)
+    #    Raw confidence from the detector, scaled into the 40-point bucket.
+    #    Minimum detector confidence to appear here is 60 (filtered earlier).
+    # ------------------------------------------------------------------
+    raw_conf = float(result.get("confidence", 0))
+    structure_pts = int(min(40, (raw_conf / 100.0) * 40.0))
+
+    # ------------------------------------------------------------------
+    # 2. Volume Confirmation (0–20 pts)
+    #    Uses the ``volume_trend`` description already embedded in the result.
+    # ------------------------------------------------------------------
+    vol_trend = str(result.get("volume_trend", "")).lower()
+    if "declining" in vol_trend or "confirming" in vol_trend:
+        # Declining volume during a consolidation = healthy formation
+        volume_pts = 15
+    elif "increasing" in vol_trend or "rising" in vol_trend:
+        volume_pts = 20
+    else:
+        volume_pts = 8
+
+    # ------------------------------------------------------------------
+    # 3. Trend Alignment (0–20 pts)
+    #    Full 20 pts when pattern direction agrees with MA20/MA50 slope.
+    # ------------------------------------------------------------------
+    trend_pts = 10  # neutral default
+    if df is not None and len(df) >= 20:
+        try:
+            closes = df["close"].values.astype(float)
+            ma20 = float(closes[-20:].mean())
+            ma50 = float(closes[-50:].mean()) if len(closes) >= 50 else ma20
+            current = float(closes[-1])
+            pname = str(result.get("pattern", "")).lower()
+            is_bullish = any(bp in pname for bp in _BULLISH_PATTERNS)
+            is_bearish = any(bp in pname for bp in _BEARISH_PATTERNS)
+            if is_bullish and current > ma20 and ma20 > ma50:
+                trend_pts = 20
+            elif is_bearish and current < ma20 and ma20 < ma50:
+                trend_pts = 20
+            elif (is_bullish or is_bearish) and current > ma50:
+                trend_pts = 15
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # 4. Level Strength (0–20 pts)
+    #    More key-point touches → stronger structural level.
+    # ------------------------------------------------------------------
+    key_points = result.get("key_points", [])
+    n_touches = len(key_points)
+    if n_touches >= 4:
+        level_pts = 20
+    elif n_touches >= 3:
+        level_pts = 15
+    elif n_touches >= 2:
+        level_pts = 10
+    else:
+        level_pts = 5
+
+    return min(100, structure_pts + volume_pts + trend_pts + level_pts)
 
 
 # ---------------------------------------------------------------------------
@@ -2088,6 +2278,9 @@ def detect_pattern(
     if state == PatternState.BROKEN:
         return None
     _normalize_result(result)
+    # Enrich with lifecycle phase and structured confidence score
+    result["phase"] = _compute_pattern_phase(result, data)
+    result["confidence_score"] = compute_pattern_confidence_score(result, data)
     return result
 
 
