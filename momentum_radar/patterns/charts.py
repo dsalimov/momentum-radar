@@ -6,7 +6,7 @@ Generates publication-quality PNG charts using *mplfinance* with:
 - Compression zone shaded between trendlines
 - Pattern state label ("FORMING" / "NEAR BREAK")
 - Breakout level shown as a horizontal dashed line
-- Dark nightclouds theme
+- Dark theme: black background, green/red candles, yellow overlays
 """
 
 import logging
@@ -176,9 +176,19 @@ def generate_pattern_chart(
         os.close(fd)
 
     # Pure black background with green/red candles and yellow pattern overlays
+    mc = mpf.make_marketcolors(
+        up="#27AE60",    # green bullish candle
+        down="#E74C3C",  # red bearish candle
+        edge="inherit",
+        wick={"up": "#27AE60", "down": "#E74C3C"},
+        volume={"up": "#1A6634", "down": "#7B1E1E"},
+    )
     style = mpf.make_mpf_style(
-        base_mpf_style="nightclouds",
+        marketcolors=mc,
         facecolor="#000000",
+        gridcolor="#2d2d4e",
+        gridstyle="--",
+        gridaxis="both",
         rc={"axes.titlesize": 10, "axes.titlecolor": "white", "axes.facecolor": "#000000",
             "figure.facecolor": "#000000"},
     )

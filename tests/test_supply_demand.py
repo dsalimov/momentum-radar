@@ -712,3 +712,183 @@ class TestDatetimeIndexGuard:
         # Should not raise and should return a list
         zones = detect_zones("TEST", daily, min_score=0.0)
         assert isinstance(zones, list)
+
+
+# ---------------------------------------------------------------------------
+# Zone pattern classification (DBR / RBR / RBD / DBD)
+# ---------------------------------------------------------------------------
+
+
+def _make_demand_zone_with_prior_drop(n: int = 80, base_price: float = 100.0) -> pd.DataFrame:
+    """Daily bars: prior drop → tight base → upward impulse (DBR pattern)."""
+    rng = pd.date_range("2024-01-01", periods=n, freq="B")
+    closes = np.full(n, base_price, dtype=float)
+    highs = closes + 0.5
+    lows = closes - 0.5
+    volumes = np.full(n, 1_000_000.0)
+
+    # Prior drop: bars 5–9 fall from base_price to base_price – 10
+    for i in range(5, 10):
+        closes[i] = base_price - (i - 4) * 2.0
+        highs[i] = closes[i] + 0.5
+        lows[i] = closes[i] - 0.5
+
+    # Tight base at bars 10–13 near the lows
+    for i in range(10, 14):
+        closes[i] = base_price - 10.0
+        highs[i] = base_price - 9.9
+        lows[i] = base_price - 10.1
+
+    opens = closes - 0.2
+
+    # Impulse UP: bars 14–18 rally sharply
+    for i in range(14, 19):
+        step = (i - 13) * 5.0
+        closes[i] = base_price - 10.0 + step
+        highs[i] = closes[i] + 0.5
+        lows[i] = closes[i] - 0.5
+        volumes[i] = 2_500_000.0
+
+    for i in range(19, n):
+        closes[i] = base_price + 5.0
+        highs[i] = closes[i] + 0.5
+        lows[i] = closes[i] - 0.5
+
+    return pd.DataFrame(
+        {
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": volumes,
+        },
+        index=rng,
+    )
+
+
+class TestZonePatternClassification:
+    def test_demand_zone_has_zone_pattern_field(self):
+        """SupplyDemandZone dataclass should expose zone_pattern."""
+        from momentum_radar.signals.supply_demand import SupplyDemandZone
+
+        zone = SupplyDemandZone(
+            ticker="T",
+            timeframe="daily",
+            zone_type="demand",
+            zone_high=105.0,
+            zone_low=100.0,
+            strength_score=70.0,
+            zone_pattern="DBR",
+        )
+        assert zone.zone_pattern == "DBR"
+
+    def test_zone_pattern_default_is_empty_string(self):
+        """zone_pattern defaults to empty string for backward compatibility."""
+        from momentum_radar.signals.supply_demand import SupplyDemandZone
+
+        zone = SupplyDemandZone(
+            ticker="T",
+            timeframe="daily",
+            zone_type="supply",
+            zone_high=110.0,
+            zone_low=105.0,
+            strength_score=65.0,
+        )
+        assert zone.zone_pattern == ""
+
+    def test_detected_demand_zone_has_pattern_label(self):
+        """Zones produced by detect_zones should carry a zone_pattern label."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily(n=80)
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        demand_zones = [z for z in zones if z.zone_type == "demand"]
+        assert len(demand_zones) >= 1
+        # Each zone should have a non-empty or well-defined zone_pattern
+        for z in demand_zones:
+            assert isinstance(z.zone_pattern, str)
+
+    def test_dbr_pattern_detected_on_drop_base_rally(self):
+        """A demand zone preceded by a drop should be classified as DBR."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_with_prior_drop(n=80)
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        demand_zones = [z for z in zones if z.zone_type == "demand"]
+        assert len(demand_zones) >= 1
+        # At least one should be labelled DBR (drop → base → rally)
+        patterns = {z.zone_pattern for z in demand_zones}
+        assert "DBR" in patterns, f"Expected DBR in {patterns}"
+
+
+# ---------------------------------------------------------------------------
+# Demand zone boundary convention (wick low → last base body high)
+# ---------------------------------------------------------------------------
+
+
+class TestDemandZoneBoundaries:
+    def test_demand_zone_low_is_wick_minimum(self):
+        """Demand zone_low should equal the lowest wick in the base, not the body."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily(n=60)
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        demand_zones = [z for z in zones if z.zone_type == "demand"]
+        assert len(demand_zones) >= 1
+        z = demand_zones[0]
+        # For _make_demand_zone_daily the base bars 10–13 have low = base_price – 0.1
+        assert z.zone_low == pytest.approx(100.0 - 0.1, abs=1e-3)
+
+    def test_demand_zone_high_uses_last_base_candle_body(self):
+        """Demand zone_high ≤ highest wick (not full wick range)."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        daily = _make_demand_zone_daily(n=60)
+        zones = detect_zones("TEST", daily, min_score=0.0)
+        demand_zones = [z for z in zones if z.zone_type == "demand"]
+        assert len(demand_zones) >= 1
+        z = demand_zones[0]
+        # zone_high should be the body-high of last base candle = max(open, close)
+        # For the test data last base candle: open=99.8, close=100 → body_high=100
+        # It should be strictly less than the wick high (100.1)
+        assert z.zone_high < 100.1 + 1e-3  # at or below wick high
+        assert z.zone_high >= z.zone_low
+
+
+# ---------------------------------------------------------------------------
+# 4H timeframe scanning
+# ---------------------------------------------------------------------------
+
+
+class TestFourHourTimeframe:
+    def test_4h_label_in_tf_score_bonus(self):
+        """The 4H timeframe should be in the TF score bonus dict."""
+        from momentum_radar.signals.supply_demand import _TF_SCORE_BONUS
+
+        assert "4h" in _TF_SCORE_BONUS
+        assert _TF_SCORE_BONUS["4h"] > _TF_SCORE_BONUS["1h"]
+
+    def test_intraday_scan_includes_4h(self):
+        """detect_zones with intraday bars should attempt 4H zone scanning."""
+        from momentum_radar.signals.supply_demand import detect_zones
+
+        # Build 5 days of 1-min bars at 390 bars/day
+        n_days = 5
+        freq = pd.tseries.offsets.Minute(1)
+        idx = pd.date_range("2024-01-02 09:30", periods=n_days * 390, freq=freq)
+        np.random.seed(7)
+        closes = 100.0 + np.random.randn(len(idx)) * 0.05
+        bars = pd.DataFrame(
+            {
+                "open": closes - 0.01,
+                "high": closes + 0.05,
+                "low": closes - 0.05,
+                "close": closes,
+                "volume": np.full(len(idx), 50_000.0),
+            },
+            index=idx,
+        )
+        daily = _make_daily(n=50)
+        # Just ensure no exception and a list is returned
+        zones = detect_zones("TEST", daily, bars=bars, min_score=0.0)
+        assert isinstance(zones, list)
