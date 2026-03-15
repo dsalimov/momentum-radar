@@ -100,7 +100,9 @@ _opening_range_alerted: Dict[str, str] = {}
 def get_active_timeframe(current_time: datetime) -> str:
     """Return the active intraday candle timeframe based on time of day.
 
-    - 09:30–09:59 → ``"1m"``  (scalp mode – maximum resolution at open)
+    Only DAY TRADE timeframes are used during market hours:
+
+    - 09:30–09:59 → ``"5m"``  (first-15-min strategy window – 5m candles track the breakout)
     - 10:00–10:59 → ``"5m"``  (intraday momentum – day trade primary TF)
     - 11:00–close → ``"15m"`` (trend continuation – day trade secondary TF)
 
@@ -112,10 +114,10 @@ def get_active_timeframe(current_time: datetime) -> str:
     """
     t = current_time.strftime("%H:%M")
     if "09:30" <= t < "10:00":
-        return config.timeframes.scalp_interval         # default "1m"
+        return config.timeframes.day_trade_interval         # "5m" – first-15-min window
     if "10:00" <= t < "11:00":
-        return config.timeframes.day_trade_interval     # default "5m"
-    return config.timeframes.day_trade_secondary_interval  # default "15m"
+        return config.timeframes.day_trade_interval         # "5m"
+    return config.timeframes.day_trade_secondary_interval   # "15m"
 
 
 def _update_opening_range(ticker: str, bars) -> None:
@@ -155,10 +157,26 @@ def _check_opening_range_breakout(
     market_condition: str,
     now: datetime,
 ) -> None:
-    """Send an alert if price breaks the opening range with volume confirmation.
+    """Send an alert when the first-15-minute candle range is broken with confirmation.
 
-    An alert is only sent once per direction per session.  Volume on the
-    break candle must be above average.
+    Strategy rules (Section 5 & 6):
+
+    1. Wait for the first 15-minute candle to close (after 09:45).
+    2. Identify the high and low of that 15-minute opening range.
+    3. Monitor subsequent 5-minute candles for a clean breakout.
+
+    Signal conditions:
+    * Price breaks **above** the OR high → potential LONG (DAY TRADE)
+    * Price breaks **below** the OR low  → potential SHORT (DAY TRADE)
+
+    Confirmation required before sending (structure break confirmation):
+    * **Volume increasing** on the breakout candle (≥ 1.5× recent average)
+    * **Strong candle body** – body ≥ 50 % of total candle range (clean momentum)
+
+    If volume is not increasing or the candle body is weak, the signal is
+    rejected to avoid false breakouts.
+
+    An alert is sent at most once per direction per session.
 
     Args:
         ticker:           Stock symbol (must be in :data:`_OPENING_RANGE_ASSETS`).
@@ -173,7 +191,7 @@ def _check_opening_range_breakout(
         return
 
     t = now.strftime("%H:%M")
-    # Only check after the opening range is fully formed
+    # Only check after the 15-minute opening range is fully formed (after 09:45)
     if t < "09:45":
         return
 
@@ -182,20 +200,36 @@ def _check_opening_range_breakout(
         return
 
     or_high, or_low = _opening_range_cache[ticker]
-    last_close = float(bars["close"].iloc[-1])
-    last_vol = float(bars["volume"].iloc[-1])
-    avg_vol = float(bars["volume"].iloc[-21:-1].mean()) if len(bars) > 1 else 0.0
+    last_bar = bars.iloc[-1]
+    last_close = float(last_bar["close"])
+    last_open = float(last_bar["open"])
+    last_high = float(last_bar["high"])
+    last_low = float(last_bar["low"])
+    last_vol = float(last_bar["volume"])
 
-    # Require volume expansion on the breakout candle
+    # Volume confirmation: breakout candle volume must be ≥ 1.5× recent average
+    avg_vol = float(bars["volume"].iloc[-21:-1].mean()) if len(bars) > 1 else 0.0
     has_volume = avg_vol > 0 and last_vol >= avg_vol * 1.5
 
+    # Structure break confirmation: candle body ≥ 50% of total candle range
+    candle_range = last_high - last_low
+    candle_body = abs(last_close - last_open)
+    has_strong_body = candle_range > 0 and (candle_body / candle_range) >= 0.5
+
     direction: Optional[str] = None
-    if last_close > or_high and has_volume:
+    if last_close > or_high and has_volume and has_strong_body:
         direction = "BUY"
-    elif last_close < or_low and has_volume:
+    elif last_close < or_low and has_volume and has_strong_body:
         direction = "SELL"
 
     if direction is None:
+        # Log why signal was rejected to aid debugging
+        if last_close > or_high or last_close < or_low:
+            logger.debug(
+                "%s – ORB rejected: has_volume=%s has_strong_body=%s (vol=%.0f avg=%.0f body_pct=%.0f%%)",
+                ticker, has_volume, has_strong_body, last_vol, avg_vol,
+                (candle_body / candle_range * 100) if candle_range > 0 else 0,
+            )
         return
 
     # One alert per direction per session
@@ -205,13 +239,17 @@ def _check_opening_range_breakout(
 
     _opening_range_alerted[ticker] = direction
 
+    vol_ratio = last_vol / avg_vol if avg_vol > 0 else 0.0
+    body_pct = candle_body / candle_range * 100 if candle_range > 0 else 0.0
     message = (
-        f"📈 OPENING RANGE BREAKOUT – {ticker}\n"
+        f"📈 FIRST 15-MIN BREAKOUT – {ticker}\n"
         f"\n"
+        f"Strategy Type: DAY TRADE\n"
         f"Direction:  {direction}\n"
         f"OR High:    {or_high:.2f}  |  OR Low:  {or_low:.2f}\n"
         f"Last Close: {last_close:.2f}\n"
-        f"Volume:     {last_vol / avg_vol:.1f}x average\n"
+        f"Volume:     {vol_ratio:.1f}x average  ✅ Confirmed\n"
+        f"Candle Body: {body_pct:.0f}% of range  ✅ Strong\n"
         f"Market:     {market_condition}\n"
         f"Time:       {now.strftime('%I:%M %p EST')}\n"
     )

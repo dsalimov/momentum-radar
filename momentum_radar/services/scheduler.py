@@ -43,22 +43,22 @@ from momentum_radar.data.data_fetcher import BaseDataFetcher
 logger = logging.getLogger(__name__)
 
 # Maximum alerts sent per hourly cycle to prevent spam
-_MAX_ALERTS_PER_HOUR: int = 5
+_MAX_ALERTS_PER_HOUR: int = 3
 
 # Minimum squeeze score to trigger automated alert
-_MIN_SQUEEZE_SCORE: int = 75
+_MIN_SQUEEZE_SCORE: int = 80
 
 # Minimum RVOL (vs 30-day avg) to trigger an automated volume-spike alert
-_MIN_RVOL_ALERT: float = 2.0
+_MIN_RVOL_ALERT: float = 2.5
 
 # Maximum volume-spike alerts per hourly cycle (separate cap from squeeze)
-_MAX_VOLUME_ALERTS_PER_HOUR: int = 3
+_MAX_VOLUME_ALERTS_PER_HOUR: int = 2
 
 # Maximum categorized signal alerts per type per hourly cycle
-_MAX_CHART_PATTERN_ALERTS: int = 3
-_MAX_CANDLESTICK_ALERTS: int = 3
-_MAX_OPTIONS_FLOW_ALERTS: int = 3
-_MAX_MOMENTUM_ALERTS: int = 3
+_MAX_CHART_PATTERN_ALERTS: int = 2
+_MAX_CANDLESTICK_ALERTS: int = 2
+_MAX_OPTIONS_FLOW_ALERTS: int = 2
+_MAX_MOMENTUM_ALERTS: int = 2
 
 # Map each signal_engine category → categorized alert_type bucket
 _CATEGORY_TO_ALERT_TYPE: Dict[str, str] = {
@@ -444,7 +444,9 @@ def _run_hourly_scan(
         conf_count = sig.confirmation_count if sig else 0
         confirmations = sig.confirmation_labels if sig else []
 
-        should_alert = score >= _MIN_SQUEEZE_SCORE or conf_count >= 2
+        # Require score above threshold AND at least 3 independent confirmations
+        # for high-quality signals only (quality over quantity).
+        should_alert = score >= _MIN_SQUEEZE_SCORE or conf_count >= 3
         if not should_alert:
             continue
 

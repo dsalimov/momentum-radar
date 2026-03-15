@@ -535,12 +535,12 @@ class TestIsFakeBreakout:
 # ---------------------------------------------------------------------------
 
 class TestGetActiveTimeframe:
-    def test_scalp_window(self):
+    def test_open_window_uses_day_trade_interval(self):
         from momentum_radar.main import get_active_timeframe
 
-        # 09:30–09:59 → scalp interval (default "1m")
+        # 09:30–09:59 → day-trade 5m interval (scalp mode removed)
         dt = datetime(2024, 1, 15, 9, 45)
-        assert get_active_timeframe(dt) == "1m"
+        assert get_active_timeframe(dt) == "5m"
 
     def test_intraday_window(self):
         from momentum_radar.main import get_active_timeframe

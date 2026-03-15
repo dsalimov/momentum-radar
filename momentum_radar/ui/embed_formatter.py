@@ -61,9 +61,9 @@ _COLOR_YELLOW = 0xF39C12  # score 70–79
 _COLOR_BLUE   = 0x2980B9  # score ≥ 90 (premium)
 _COLOR_RED    = 0xC0392B  # sell setup
 
-# Strategy display names
+# Strategy display names (only DAY TRADE and SWING TRADE categories remain)
 _STRATEGY_NAMES: Dict[str, str] = {
-    "scalp":          "SCALP",
+    "scalp":          "DAY TRADE",
     "intraday":       "INTRADAY",
     "swing":          "SWING",
     "chart_pattern":  "PATTERN",
