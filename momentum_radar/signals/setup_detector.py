@@ -100,19 +100,21 @@ class StrategyType(Enum):
     """High-level trading strategy classification for user-facing alerts.
 
     Every :class:`TradeSetup` is automatically classified into one of these
-    three categories so that the alert header clearly communicates the expected
+    two categories so that the alert header clearly communicates the expected
     time horizon and trading style.
+
+    * **DAY_TRADE** – intraday signals on 1m / 5m / 15m timeframes.
+    * **SWING_TRADE** – multi-day signals on 1H / 4H / Daily timeframes.
     """
 
-    SCALP_TRADE = "SCALP TRADE"
     DAY_TRADE = "DAY TRADE"
     SWING_TRADE = "SWING TRADE"
 
 
 #: Mapping from setup type to the appropriate strategy classification.
 _SETUP_STRATEGY: Dict[SetupType, StrategyType] = {
-    SetupType.LIQUIDITY_SWEEP:        StrategyType.SCALP_TRADE,
-    SetupType.MOMENTUM_IGNITION:      StrategyType.SCALP_TRADE,
+    SetupType.LIQUIDITY_SWEEP:        StrategyType.DAY_TRADE,
+    SetupType.MOMENTUM_IGNITION:      StrategyType.DAY_TRADE,
     SetupType.VWAP_RECLAIM:           StrategyType.DAY_TRADE,
     SetupType.VWAP_BREAKDOWN:         StrategyType.DAY_TRADE,
     SetupType.OPENING_RANGE_BREAKOUT: StrategyType.DAY_TRADE,

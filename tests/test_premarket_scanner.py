@@ -220,3 +220,151 @@ class TestScanOptionsSpikes:
         fetcher.get_options_volume.return_value = None
         results = scan_options_spikes(["X"], fetcher)
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# scan_swing_trade_setups
+# ---------------------------------------------------------------------------
+
+def _make_double_bottom_daily(n: int = 60) -> pd.DataFrame:
+    """Return a daily DataFrame shaped like a double bottom."""
+    rng = pd.date_range("2024-01-01", periods=n, freq="B")
+    closes = np.full(n, 100.0)
+    # First bottom around bar 15
+    closes[10:20] = 90.0
+    # Intermediate high around bar 30
+    closes[25:35] = 105.0
+    # Second bottom around bar 45
+    closes[40:50] = 91.0
+    # Recovery to breakout level
+    closes[50:] = 106.0
+    highs = closes + 2.0
+    lows = closes - 2.0
+    volumes = np.full(n, 1_000_000.0)
+    return pd.DataFrame(
+        {"open": closes, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=rng,
+    )
+
+
+def _make_flag_daily(n: int = 30) -> pd.DataFrame:
+    """Return a daily DataFrame shaped like a bullish flag."""
+    rng = pd.date_range("2024-01-01", periods=n, freq="B")
+    closes = np.full(n, 100.0)
+    # Strong upward move in prior bars (bars 10–20)
+    closes[10:20] = np.linspace(100.0, 115.0, 10)
+    # Tight consolidation in final bars
+    closes[20:] = np.linspace(114.0, 113.5, n - 20)
+    highs = closes + 1.0
+    lows = closes - 1.0
+    volumes = np.full(n, 1_000_000.0)
+    return pd.DataFrame(
+        {"open": closes, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=rng,
+    )
+
+
+class TestScanSwingTradeSetups:
+    """Tests for the premarket swing trade setup scanner."""
+
+    def test_returns_list(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        results = scan_swing_trade_setups(["AAPL"], fetcher)
+        assert isinstance(results, list)
+
+    def test_respects_top_n(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        tickers = [f"T{i}" for i in range(20)]
+        results = scan_swing_trade_setups(tickers, fetcher, top_n=5)
+        assert len(results) <= 5
+
+    def test_returns_at_most_ten_by_default(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        tickers = [f"T{i}" for i in range(30)]
+        results = scan_swing_trade_setups(tickers, fetcher)
+        assert len(results) <= 10
+
+    def test_result_fields_present(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        results = scan_swing_trade_setups(["TSLA"], fetcher, min_confidence=0)
+        if results:
+            r = results[0]
+            assert "ticker" in r
+            assert "pattern_name" in r
+            assert "pattern_confidence" in r
+            assert "current_price" in r
+            assert "key_level" in r
+            assert "strategy_type" in r
+            assert r["strategy_type"] == "SWING TRADE"
+            assert r["timeframe"] == "Daily"
+
+    def test_strategy_type_is_swing_trade(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        results = scan_swing_trade_setups(["MSFT"], fetcher, min_confidence=0)
+        for r in results:
+            assert r["strategy_type"] == "SWING TRADE"
+
+    def test_filters_by_confidence(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        results_high = scan_swing_trade_setups(["X"], fetcher, min_confidence=95)
+        results_low = scan_swing_trade_setups(["X"], fetcher, min_confidence=0)
+        # High confidence filter should return fewer or equal results
+        assert len(results_high) <= len(results_low)
+
+    def test_empty_data_returns_empty(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = None
+        results = scan_swing_trade_setups(["NONE"], fetcher)
+        assert results == []
+
+    def test_insufficient_data_returns_empty(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        import pandas as pd
+
+        tiny = pd.DataFrame(
+            {"open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [1e6]},
+            index=pd.date_range("2024-01-01", periods=1, freq="B"),
+        )
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = tiny
+        results = scan_swing_trade_setups(["TINY"], fetcher)
+        assert results == []
+
+    def test_sorted_by_confidence_descending(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.return_value = _make_double_bottom_daily()
+        tickers = [f"T{i}" for i in range(10)]
+        results = scan_swing_trade_setups(tickers, fetcher, min_confidence=0)
+        confidences = [r["pattern_confidence"] for r in results]
+        assert confidences == sorted(confidences, reverse=True)
+
+    def test_fetcher_error_handled_gracefully(self):
+        from momentum_radar.premarket.scanner import scan_swing_trade_setups
+
+        fetcher = MagicMock()
+        fetcher.get_daily_bars.side_effect = Exception("network error")
+        results = scan_swing_trade_setups(["ERR"], fetcher)
+        assert results == []

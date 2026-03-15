@@ -160,11 +160,11 @@ def _make_signal(**kwargs):
 
 class TestFormatStrategySignal:
     def test_scalp_trade_header(self):
-        """Scalp strategy uses 🚨 SCALP TRADE header."""
+        """Scalp strategy is now classified as DAY TRADE (scalp removed)."""
         from momentum_radar.alerts.trade_formatter import format_strategy_signal
         signal = _make_signal(strategy="scalp")
         msg = format_strategy_signal(signal)
-        assert "🚨 SCALP TRADE" in msg
+        assert "🚨 DAY TRADE" in msg
 
     def test_day_trade_header_intraday(self):
         """Intraday strategy uses 🚨 DAY TRADE header."""

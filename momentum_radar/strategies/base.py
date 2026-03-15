@@ -8,8 +8,10 @@ from dataclasses import dataclass, field
 from typing import List
 
 #: Maps each strategy name to its user-facing strategy classification label.
+#: Only DAY TRADE and SWING TRADE are supported.  Any former scalp-style
+#: strategy is promoted to DAY TRADE.
 STRATEGY_TYPE_MAP: dict = {
-    "scalp":          "SCALP TRADE",
+    "scalp":          "DAY TRADE",
     "intraday":       "DAY TRADE",
     "swing":          "SWING TRADE",
     "chart_pattern":  "SWING TRADE",
@@ -23,8 +25,8 @@ class StrategySignal:
 
     Attributes:
         ticker:               Stock symbol.
-        strategy:             Strategy name (e.g. ``"scalp"``).
-        strategy_type:        User-facing classification label (e.g. ``"SCALP TRADE"``).
+        strategy:             Strategy name (e.g. ``"intraday"``).
+        strategy_type:        User-facing classification label (``"DAY TRADE"`` or ``"SWING TRADE"``).
                               Auto-derived from *strategy* if left empty.
         direction:            ``"BUY"`` or ``"SELL"``.
         timeframe:            Active timeframe (e.g. ``"2m"``, ``"5m"``, ``"1H"``).

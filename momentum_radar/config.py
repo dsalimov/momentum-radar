@@ -169,11 +169,11 @@ class ScoreThresholds:
     )
     # High-probability signal gate: weighted score must be >= this value (0-100+ scale)
     signal_score_minimum: int = field(
-        default_factory=lambda: _int("SIGNAL_SCORE_MINIMUM", 75)
+        default_factory=lambda: _int("SIGNAL_SCORE_MINIMUM", 80)
     )
     # Minimum number of independent modules that must fire before sending an alert
     min_signal_confirmations: int = field(
-        default_factory=lambda: _int("MIN_SIGNAL_CONFIRMATIONS", 3)
+        default_factory=lambda: _int("MIN_SIGNAL_CONFIRMATIONS", 4)
     )
 
 
@@ -252,17 +252,12 @@ class TimeframeConfig:
     Different trading strategies require different candle granularities and
     lookback windows:
 
-    * **Scalp** – 1–5 min candles, last 5 days of data
-    * **Day trade** – 5–15 min candles, 60 days for moving averages
+    * **Day trade** – 1m / 5m / 15m candles, 60 days for moving averages
     * **Swing** – 1 H / 4 H / 1 D candles, 200 days for 50/200 MA alignment
     """
 
-    # Scalp trade timeframes
-    scalp_interval: str = field(default_factory=lambda: _str("SCALP_INTERVAL", "1m"))
-    scalp_fast_interval: str = field(default_factory=lambda: _str("SCALP_FAST_INTERVAL", "5m"))
-    scalp_history_days: int = field(default_factory=lambda: _int("SCALP_HISTORY_DAYS", 5))
-
-    # Day trade timeframes
+    # Day trade timeframes (intraday: 1m for first-15-min strategy, 5m/15m primary)
+    day_trade_1m_interval: str = field(default_factory=lambda: _str("DAY_TRADE_1M_INTERVAL", "1m"))
     day_trade_interval: str = field(default_factory=lambda: _str("DAY_TRADE_INTERVAL", "5m"))
     day_trade_secondary_interval: str = field(
         default_factory=lambda: _str("DAY_TRADE_SECONDARY_INTERVAL", "15m")
@@ -286,6 +281,20 @@ class TimeframeConfig:
     swing_history_days: int = field(
         default_factory=lambda: _int("SWING_HISTORY_DAYS", 200)
     )
+
+    # ---------------------------------------------------------------------------
+    # Backward-compatibility shim: code that still reads ``scalp_interval`` will
+    # receive the 1-minute day-trade interval value rather than failing.
+    # ---------------------------------------------------------------------------
+    @property
+    def scalp_interval(self) -> str:  # noqa: D401
+        """Deprecated – returns ``day_trade_1m_interval``."""
+        return self.day_trade_1m_interval
+
+    @property
+    def scalp_history_days(self) -> int:  # noqa: D401
+        """Deprecated – returns ``day_trade_history_days``."""
+        return self.day_trade_history_days
 
 
 @dataclass

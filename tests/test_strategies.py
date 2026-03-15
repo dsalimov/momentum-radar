@@ -84,8 +84,9 @@ class TestStrategySignalBase:
     def test_strategy_type_auto_derived_scalp(self):
         from momentum_radar.strategies.base import StrategySignal
 
+        # Scalp is no longer a distinct category; it maps to DAY TRADE.
         s = StrategySignal(ticker="T", strategy="scalp")
-        assert s.strategy_type == "SCALP TRADE"
+        assert s.strategy_type == "DAY TRADE"
 
     def test_strategy_type_auto_derived_intraday(self):
         from momentum_radar.strategies.base import StrategySignal
