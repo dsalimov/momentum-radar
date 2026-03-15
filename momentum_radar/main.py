@@ -240,6 +240,7 @@ def _check_opening_range_breakout(
     _opening_range_alerted[ticker] = direction
 
     vol_ratio = last_vol / avg_vol if avg_vol > 0 else 0.0
+    body_pct = candle_body / candle_range * 100 if candle_range > 0 else 0.0
     message = (
         f"📈 FIRST 15-MIN BREAKOUT – {ticker}\n"
         f"\n"
@@ -248,7 +249,7 @@ def _check_opening_range_breakout(
         f"OR High:    {or_high:.2f}  |  OR Low:  {or_low:.2f}\n"
         f"Last Close: {last_close:.2f}\n"
         f"Volume:     {vol_ratio:.1f}x average  ✅ Confirmed\n"
-        f"Candle Body: {candle_body / candle_range * 100:.0f}% of range  ✅ Strong\n"
+        f"Candle Body: {body_pct:.0f}% of range  ✅ Strong\n"
         f"Market:     {market_condition}\n"
         f"Time:       {now.strftime('%I:%M %p EST')}\n"
     )

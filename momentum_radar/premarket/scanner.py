@@ -417,7 +417,7 @@ def _detect_swing_pattern(daily) -> tuple:
     if len(lmin_idx) >= 3:
         ls_idx, h_idx, rs_idx = lmin_idx[-3], lmin_idx[-2], lmin_idx[-1]
         ls, hd, rs = lows[ls_idx], lows[h_idx], lows[rs_idx]
-        if hd < ls * 0.98 and hd < rs * 0.98 and abs(ls - rs) / max(abs(ls), abs(rs)) <= 0.05:
+        if hd < ls * 0.98 and hd < rs * 0.98 and abs(ls - rs) / max(ls, rs) <= 0.05:
             trough_h_l = highs[ls_idx:h_idx].max() if h_idx > ls_idx else ls
             trough_h_r = highs[h_idx:rs_idx + 1].max() if rs_idx > h_idx else rs
             neckline = (trough_h_l + trough_h_r) / 2.0
@@ -531,7 +531,7 @@ def scan_swing_trade_setups(
             if current_price <= 0:
                 continue
 
-            pct_to_key = round((key_level - current_price) / current_price * 100, 2) if current_price > 0 else 0.0
+            pct_to_key = round((key_level - current_price) / current_price * 100, 2)
 
             results.append(
                 {
