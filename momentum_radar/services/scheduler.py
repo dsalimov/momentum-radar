@@ -264,6 +264,7 @@ def _run_categorized_signal_scan(
     send_fn: Callable[[str], None],
     already_alerted: Optional[Set[str]] = None,
     top_n: int = 30,
+    blocked_alert_types: Optional[Set[str]] = None,
 ) -> Set[str]:
     """Scan *tickers* for categorized signals and emit separate alerts per type.
 
@@ -282,16 +283,22 @@ def _run_categorized_signal_scan(
       :func:`~momentum_radar.storage.database.should_send_signal_alert`.
     - Per-type alert cap (``_ALERT_TYPE_CAPS``).
     - Tickers in *already_alerted* are skipped (already covered this cycle).
+    - Alert types in *blocked_alert_types* are suppressed entirely (used to
+      block chart-pattern discovery during regular market hours per Section 6
+      of the architecture spec).
 
     The function returns the set of all tickers that were alerted (useful for
     the caller to track cross-category dedup).
 
     Args:
-        tickers:         Stock universe.
-        fetcher:         Data provider.
-        send_fn:         Alert delivery callable.
-        already_alerted: Set of tickers already alerted this cycle (avoided).
-        top_n:           Maximum tickers evaluated for categorized signals.
+        tickers:             Stock universe.
+        fetcher:             Data provider.
+        send_fn:             Alert delivery callable.
+        already_alerted:     Set of tickers already alerted this cycle (avoided).
+        top_n:               Maximum tickers evaluated for categorized signals.
+        blocked_alert_types: Alert type buckets that must not be emitted in
+                             this cycle (e.g. ``{"chart_pattern"}`` during
+                             regular market hours).
 
     Returns:
         Set of tickers that received at least one categorized alert.
@@ -348,6 +355,14 @@ def _run_categorized_signal_scan(
 
         # Emit one alert per triggered bucket (subject to cap + dedup)
         for alert_type, confs in bucket_confs.items():
+            # Section 6: block chart-pattern discovery during market hours
+            if blocked_alert_types and alert_type in blocked_alert_types:
+                logger.debug(
+                    "Categorized scan: %s/%s blocked (session restriction)",
+                    ticker, alert_type,
+                )
+                continue
+
             cap = _ALERT_TYPE_CAPS.get(alert_type, 3)
             if type_counts.get(alert_type, 0) >= cap:
                 continue
@@ -547,13 +562,21 @@ def _run_hourly_scan(
     # Emit separate alerts for chart patterns, candlestick patterns, options
     # flow, and momentum signals.  Tickers already alerted above are skipped
     # to prevent the same stock appearing multiple times for the same reason.
+    #
+    # Section 6 (architecture spec): during regular market hours chart-pattern
+    # discovery is suppressed.  Only live trading opportunity alerts are
+    # allowed intraday (volume surges, options flow, momentum / candlestick
+    # signals).  Chart patterns are reserved for premarket / post-market runs.
     # -----------------------------------------------------------------------
     try:
+        from momentum_radar.utils.market_hours import is_market_open
+        _blocked: Set[str] = {"chart_pattern"} if is_market_open() else set()
         _run_categorized_signal_scan(
             tickers,
             fetcher,
             send_fn,
             already_alerted=set(alerted_tickers),
+            blocked_alert_types=_blocked,
         )
     except Exception as exc:
         logger.error("Hourly scan: categorized signal scan failed: %s", exc)

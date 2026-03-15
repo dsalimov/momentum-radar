@@ -15,9 +15,11 @@ so they are fully testable with a mock.
 """
 
 import logging
+import numpy as np
 from typing import Dict, List, Optional
 
 from momentum_radar.data.data_fetcher import BaseDataFetcher
+from momentum_radar.patterns.detector import _BULLISH_PATTERNS, _BEARISH_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +478,28 @@ def _detect_swing_pattern(daily) -> tuple:
     return ("", 0, 0.0)
 
 
+def _pattern_phase_from_confidence(
+    pattern_name: str,
+    confidence: int,
+    current_price: float,
+    key_level: float,
+) -> str:
+    """Derive the pattern lifecycle phase from the scanner's confidence value.
+
+    The premarket scanner's ``_detect_swing_pattern`` uses ``confidence=85``
+    to indicate that price has already moved through the key level, and lower
+    values (65–75) for patterns that are formed but awaiting confirmation.
+
+    Returns one of ``"forming"``, ``"confirming"``, or ``"breakout"`` —
+    matching the :class:`~momentum_radar.patterns.detector.PatternPhase` values.
+    """
+    if confidence >= 85:
+        return "breakout"
+    if confidence >= 73:
+        return "confirming"
+    return "forming"
+
+
 def scan_swing_trade_setups(
     tickers: List[str],
     fetcher: BaseDataFetcher,
@@ -493,26 +517,33 @@ def scan_swing_trade_setups(
     * Flag / Pennant
 
     This function is designed to run **before market open** (premarket) and
-    return a clean morning watchlist of the **top 10** swing trade candidates.
+    return a clean morning watchlist of the **top 10–15** swing trade
+    candidates (Section 5 of the architecture spec).
 
     Args:
         tickers:        S&P 500 + NASDAQ tickers to scan.
         fetcher:        Data provider.
-        top_n:          Maximum results to return (default 10).
+        top_n:          Maximum results to return (default 10, capped at 15).
         min_confidence: Minimum pattern confidence (0–100) to include a result.
 
     Returns:
         List of up to *top_n* dicts (sorted by confidence descending), each with:
 
-        * ``ticker``           – Stock symbol.
-        * ``pattern_name``     – Detected chart pattern name.
-        * ``pattern_confidence`` – Pattern confidence score (0–100).
-        * ``current_price``    – Latest closing price.
-        * ``key_level``        – Key breakout or breakdown level.
-        * ``pct_to_key``       – Percentage distance from current price to key level.
-        * ``timeframe``        – Timeframe used for analysis (``"Daily"``).
-        * ``strategy_type``    – Always ``"SWING TRADE"``.
+        * ``ticker``              – Stock symbol.
+        * ``pattern_name``        – Detected chart pattern name.
+        * ``pattern_confidence``  – Raw pattern confidence score (0–100).
+        * ``confidence_score``    – Structured confidence score (0–100) using the
+          four-dimension model (Structure/Volume/Trend/Level strength).
+        * ``phase``               – Pattern lifecycle phase: ``"forming"``,
+          ``"confirming"``, or ``"breakout"``.
+        * ``current_price``       – Latest closing price.
+        * ``key_level``           – Key breakout or breakdown level.
+        * ``pct_to_key``          – Percentage distance from current price to key level.
+        * ``timeframe``           – Timeframe used for analysis (``"Daily"``).
+        * ``strategy_type``       – Always ``"SWING TRADE"``.
     """
+    # Section 9: premarket watchlist is capped at 15 setups maximum.
+    top_n = min(top_n, 15)
     results: List[Dict] = []
 
     for ticker in tickers:
@@ -533,11 +564,57 @@ def scan_swing_trade_setups(
 
             pct_to_key = round((key_level - current_price) / current_price * 100, 2)
 
+            # Determine phase and structured confidence score
+            phase = _pattern_phase_from_confidence(
+                pattern_name, confidence, current_price, key_level
+            )
+
+            # Structured confidence score using the four-dimension model
+            vols = daily["volume"].values.astype(float) if "volume" in daily.columns else None
+            vol_trend = ""
+            if vols is not None and len(vols) >= 5:
+                recent_slope = float(np.polyfit(np.arange(5), vols[-5:], 1)[0])
+                avg_vol = float(vols[-5:].mean())
+                if avg_vol > 0:
+                    if recent_slope < -avg_vol * 0.02:
+                        vol_trend = "Declining"
+                    elif recent_slope > avg_vol * 0.02:
+                        vol_trend = "Increasing"
+                    else:
+                        vol_trend = "Flat"
+            # Structure (40 pts) + Volume (20 pts) + Trend (20 pts) + Level (20 pts)
+            structure_pts = int(min(40, (confidence / 100.0) * 40.0))
+            vol_lower = vol_trend.lower()
+            if "declining" in vol_lower:
+                volume_pts = 15
+            elif "increasing" in vol_lower:
+                volume_pts = 20
+            else:
+                volume_pts = 8
+            trend_pts = 10
+            if len(daily) >= 20:
+                closes = daily["close"].values.astype(float)
+                ma20 = float(closes[-20:].mean())
+                ma50 = float(closes[-50:].mean()) if len(closes) >= 50 else ma20
+                pname = pattern_name.lower()
+                is_bullish = any(bp in pname for bp in _BULLISH_PATTERNS)
+                is_bearish = any(bp in pname for bp in _BEARISH_PATTERNS)
+                if is_bullish and current_price > ma20 and ma20 > ma50:
+                    trend_pts = 20
+                elif is_bearish and current_price < ma20 and ma20 < ma50:
+                    trend_pts = 20
+                elif (is_bullish or is_bearish) and current_price > ma50:
+                    trend_pts = 15
+            level_pts = 10  # default for scanner (no key_points list available)
+            confidence_score = min(100, structure_pts + volume_pts + trend_pts + level_pts)
+
             results.append(
                 {
                     "ticker": ticker,
                     "pattern_name": pattern_name,
                     "pattern_confidence": confidence,
+                    "confidence_score": confidence_score,
+                    "phase": phase,
                     "current_price": round(current_price, 2),
                     "key_level": key_level,
                     "pct_to_key": pct_to_key,
@@ -548,6 +625,6 @@ def scan_swing_trade_setups(
         except Exception as exc:
             logger.debug("scan_swing_trade_setups skipped %s: %s", ticker, exc)
 
-    # Sort by confidence descending, return top N
+    # Sort by confidence descending, return top N (capped at 15 per Section 9)
     results.sort(key=lambda r: r["pattern_confidence"], reverse=True)
     return results[:top_n]
